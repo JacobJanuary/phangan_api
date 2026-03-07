@@ -160,7 +160,7 @@ async def list_events(
     date_filter: Optional[Literal["today", "tomorrow", "all"]] = Query(
         default="all", alias="date"
     ),
-    limit: int = Query(default=30, ge=1, le=100),
+    limit: int = Query(default=30, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     pool: asyncpg.Pool = Depends(get_pool),
     _user_id: int = Depends(get_current_user_id),   # enforces Bearer JWT
@@ -239,7 +239,7 @@ async def list_events(
         FROM events e
         LEFT JOIN venues v ON e.venue_id = v.id
         {where}
-        ORDER BY e.event_date ASC, e.filter_score DESC NULLS LAST, e.detected_at DESC NULLS LAST
+        ORDER BY e.event_date ASC, e.event_time ASC NULLS LAST, e.filter_score DESC NULLS LAST
         LIMIT {limit_ph} OFFSET {offset_ph}
     """
 
