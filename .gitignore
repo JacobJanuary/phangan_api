@@ -1,0 +1,15 @@
+# Environments
+.env
+
+# Dependencies
+venv/
+__pycache__/
+*.pyc
+
+# Local Config
+.idea/
+.vscode/
+
+# Media and Phantom Data
+media/
+data/
