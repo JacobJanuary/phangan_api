@@ -29,6 +29,18 @@ _GRID_PRECISION = 3   # ~110m at equator; groups users within ~100-200m
 _MAPBOX_BATCH_SIZE = 25  # Mapbox Matrix API limit per request
 _MAPBOX_BASE = "https://api.mapbox.com/directions-matrix/v1/mapbox/driving"
 
+# ── Koh Phangan bounding box (with ~1km coastal buffer) ──────────────────────
+_PHANGAN_LAT_MIN = 9.65
+_PHANGAN_LAT_MAX = 9.84
+_PHANGAN_LNG_MIN = 99.91
+_PHANGAN_LNG_MAX = 100.14
+
+
+def _is_on_phangan(lat: float, lng: float) -> bool:
+    """Check if coordinates fall within the Koh Phangan bounding box."""
+    return (_PHANGAN_LAT_MIN <= lat <= _PHANGAN_LAT_MAX and
+            _PHANGAN_LNG_MIN <= lng <= _PHANGAN_LNG_MAX)
+
 # ── In-memory cache ─────────────────────────────────────────────────────────
 # Structure: { (grid_lat, grid_lng): { venue_id: { "distance_m": float, "duration_s": float, "ts": float } } }
 _cache: dict[tuple[float, float], dict[int, dict[str, float]]] = {}
@@ -108,6 +120,11 @@ async def enrich_with_distances(
     user_lng: float,
 ) -> None:
     """Mutate events in-place, adding distance_km and bike_minutes fields."""
+    # Skip if user is not on Phangan — no point calculating distances
+    if not _is_on_phangan(user_lat, user_lng):
+        logger.debug("User at (%.4f, %.4f) is off-island, skipping distances", user_lat, user_lng)
+        return
+
     settings = get_settings()
     token = settings.MAPBOX_TOKEN
     if not token:
