@@ -114,12 +114,31 @@ async def _fetch_mapbox_matrix(
     return results
 
 
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Haversine straight-line distance in km."""
+    R = 6371.0  # Earth radius in km
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = (math.sin(dlat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(dlng / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+# Koh Phangan road winding factor: roads are ~1.4x straight-line distance on average
+_ROAD_FACTOR = 1.4
+
+
 async def enrich_with_distances(
     events: list[dict],
     user_lat: float,
     user_lng: float,
 ) -> None:
-    """Mutate events in-place, adding distance_km and bike_minutes fields."""
+    """Mutate events in-place, adding distance_km and bike_minutes fields.
+
+    - distance_km: Haversine × road factor (reliable, no API quirks)
+    - bike_minutes: Mapbox Matrix duration (API-based travel time estimate)
+    """
     # Skip if user is not on Phangan — no point calculating distances
     if not _is_on_phangan(user_lat, user_lng):
         logger.debug("User at (%.4f, %.4f) is off-island, skipping distances", user_lat, user_lng)
@@ -156,7 +175,7 @@ async def enrich_with_distances(
             continue  # Cache hit
         uncached.append((venue_cache_key, coord_key[0], coord_key[1]))
 
-    # Fetch missing from Mapbox
+    # Fetch missing from Mapbox (for duration only)
     if uncached:
         logger.info("Mapbox Matrix: %d venues to fetch for grid %s", len(uncached), gk)
         new_results = await _fetch_mapbox_matrix(user_lat, user_lng, uncached, token)
@@ -166,9 +185,17 @@ async def enrich_with_distances(
     for coord_key, evs in venue_map.items():
         venue_cache_key = coord_key_to_id[coord_key]
         entry = cell_cache.get(venue_cache_key)
-        if entry and "distance_m" in entry:
-            dist_km = round(entry["distance_m"] / 1000, 1)
+
+        # Haversine distance × road factor (always available, no API dependency)
+        haversine_dist = _haversine_km(user_lat, user_lng, coord_key[0], coord_key[1])
+        dist_km = round(haversine_dist * _ROAD_FACTOR, 1)
+
+        # Mapbox Matrix duration (if available)
+        bike_min = None
+        if entry and "duration_s" in entry:
             bike_min = math.ceil(entry["duration_s"] / 60)
-            for ev in evs:
-                ev["distance_km"] = dist_km
-                ev["bike_minutes"] = bike_min
+
+        for ev in evs:
+            ev["distance_km"] = dist_km
+            ev["bike_minutes"] = bike_min
+
