@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # ── Constants ────────────────────────────────────────────────────────────────
 _CACHE_TTL_S = 86400  # 24 hours
 _GRID_PRECISION = 3   # ~110m at equator; groups users within ~100-200m
-_MAPBOX_BATCH_SIZE = 25  # Mapbox Matrix API limit per request
+_MAPBOX_BATCH_SIZE = 24  # Max 24 destinations + 1 origin = 25 total
 _MAPBOX_BASE = "https://api.mapbox.com/directions-matrix/v1/mapbox/driving"
 
 # ── Koh Phangan bounding box (with ~1km coastal buffer) ──────────────────────
