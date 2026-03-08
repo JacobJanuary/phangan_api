@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Phantom Avatar Generator — Gemini AI Pipeline.
+Phantom Avatar Generator v4 — Gemini + Imagen AI Pipeline.
 
 Generates realistic travel-lifestyle avatar images for 100 phantom users.
 
-Phase 1: Gemini 3 Flash → unique image prompt per user (name + gender + scene)
-Phase 2: gemini-3.1-flash-image-preview → image generation → WebP → DB update
+Phase 1: Gemini 3 Flash → unique image prompt (name + gender + mood + random variety)
+Phase 2: Imagen 4.0 Fast → image (with person_generation=ALLOW_ADULT)
+         Fallback: Imagen 4.0 → Gemini 3.1 Flash Image
 
 Usage:
     cd /path/to/phangan_api
@@ -19,7 +20,6 @@ import asyncio
 import logging
 import random
 import sys
-import time
 from io import BytesIO
 from pathlib import Path
 
@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import asyncpg
 from PIL import Image
 from google import genai
+from google.genai import types
 
 from app.core.config import get_settings
 
@@ -39,94 +40,176 @@ logging.basicConfig(
 )
 logger = logging.getLogger("phantom_gen")
 
-# ── Scene pool ───────────────────────────────────────────────────────────────
-SCENES = [
-    "standing on a tropical white sand beach at golden hour sunset, ocean waves in the background",
-    "relaxing on a terrace of a luxury tropical villa overlooking the sea, palm trees around",
-    "at a cozy tiki beach bar with string lights, tropical cocktail on the counter",
-    "at a scenic viewpoint overlooking a tropical island panorama, lush green hills and blue sea",
-    "on a wooden pier extending into turquoise tropical water, boats in the distance",
-    "in a tropical garden with blooming frangipani flowers and banana trees",
-    "at an outdoor yoga space on a clifftop overlooking the ocean, morning light",
-    "walking down a palm-lined tropical road, motorbike parked nearby, golden light filtering through trees",
+# ── Variety pools ─────────────────────────────────────────────────────────────
+POSES = [
+    "laughing with head slightly tilted back",
+    "looking slightly to the side with a relaxed smile",
+    "resting chin on hand, warm smile",
+    "brushing hair back with one hand, candid moment",
+    "looking at camera with a confident grin",
+    "caught mid-laugh, eyes slightly squinted",
+    "gazing into the distance with a soft smile",
+    "leaning against a railing, relaxed pose",
+    "sunglasses pushed up on head, smiling",
+    "holding a tropical drink, turning toward camera",
+]
+
+ANGLES = [
+    "shot slightly from below, heroic feel",
+    "three-quarter face view, slightly turned",
+    "straight-on eye contact, intimate feel",
+    "slight side profile, looking back over shoulder",
+    "shot from slightly above, soft and approachable",
+    "natural selfie angle, warm and casual",
+]
+
+# ── Mood-specific scene details (from old Phantom Protocol) ──────────────────
+MOOD_SCENES = {
+    "party": [
+        "dark jungle rave background, neon purple and red lighting, sweaty glowing skin, blurry dancing crowd behind",
+        "beach party with fire dancers in background, warm orange glow, festive energy",
+        "rooftop bar at night, city lights and ocean behind, cocktail atmosphere",
+        "full moon party beach, colorful lights reflecting on water, night energy",
+    ],
+    "spiritual": [
+        "zen morning beach at golden hour, peaceful serene aura, organic natural feel",
+        "yoga retreat terrace with ocean view, early morning soft mist",
+        "tropical garden with incense smoke, warm peaceful golden light",
+        "meditation spot on cliff overlooking ocean, sunrise light",
+    ],
+    "business": [
+        "trendy tropical coworking cafe, bright daytime, laptop edge slightly visible",
+        "modern villa workspace with sea view through window, clean bright light",
+        "stylish beach cafe, macbook blurred in background, professional casual vibe",
+        "co-living space terrace, morning coffee, productive energy",
+    ],
+}
+
+# Fallback for phantoms without mood
+MOOD_SCENES[None] = [
+    "blurred tropical sunset over ocean",
+    "lush green jungle foliage, dappled sunlight",
+    "palm tree silhouettes against golden sky",
+]
+
+LIGHTING = [
+    "warm golden hour sunlight on face",
+    "soft diffused morning light",
+    "dramatic sunset backlight with rim light on hair",
+    "dappled light through palm leaves",
+    "warm ambient glow from string lights",
+    "natural shade with bright tropical background",
 ]
 
 FEMALE_STYLES = [
     "wearing a light summer dress",
-    "wearing a colorful tropical print outfit",
-    "wearing a casual resort wear top and shorts",
-    "wearing a flowy bohemian dress",
-    "wearing a light linen beach outfit",
+    "wearing a colorful tropical print top",
+    "wearing an off-shoulder bohemian blouse",
+    "in a casual crop top",
+    "wearing a strappy tank top",
+    "wearing a festival outfit",
 ]
 
 MALE_STYLES = [
-    "wearing an unbuttoned linen shirt and shorts",
+    "wearing an unbuttoned linen shirt",
     "wearing a casual tropical print shirt",
-    "wearing a tank top and board shorts",
-    "wearing a simple t-shirt and linen pants",
-    "wearing a casual resort polo shirt",
+    "wearing a fitted tank top",
+    "wearing a simple t-shirt, sun-kissed skin",
+    "shirtless, natural and athletic",
+    "smart casual tropical wear",
 ]
 
+# ── Image model ───────────────────────────────────────────────────────────────
+IMAGE_MODEL = "gemini-3.1-flash-image-preview"
 
-def _build_meta_prompt(name: str, gender: str) -> str:
+
+def _build_meta_prompt(name: str, gender: str, mood: str | None) -> str:
     """Build the Phase 1 meta-prompt for Gemini 3 Flash."""
     age_range = "20-29 years old" if gender == "female" else "25-40 years old"
     pronoun = "woman" if gender == "female" else "man"
+    pose = random.choice(POSES)
+    angle = random.choice(ANGLES)
+    scene = random.choice(MOOD_SCENES.get(mood, MOOD_SCENES[None]))
+    light = random.choice(LIGHTING)
+    mood_label = mood or "traveler"
 
-    return f"""You are a creative director for a travel lifestyle photography brand. 
-Generate a single detailed image prompt for an AI image generator. 
+    return f"""You are a creative director making unique avatar photos for a social travel app on Koh Phangan.
+Generate ONE detailed image prompt for an AI image generator.
 
-Subject: A {pronoun} named {name}, {age_range}, with a natural attractive appearance.
-The person should look like a real traveler/tourist on a tropical island in Thailand.
+Subject: A {pronoun} named {name}, {age_range}, attractive, natural look.
+Personality: {mood_label} type — reflect this in their vibe and energy.
+This is for a PROFILE AVATAR — face is the main focus, but it should feel CANDID and ALIVE, not like a passport photo.
 
-Requirements for the prompt you generate:
-- Describe the person's appearance naturally (hair color/style, skin tone, build) — make it diverse and realistic
-- Include specific photography details: camera angle, lighting, depth of field
-- The mood should be warm, happy, adventurous — like a travel Instagram post
-- Include a specific tropical Koh Phangan scene/background
-- Mention clothing appropriate for a tropical island
-- Do NOT mention any brand names
-- The prompt should produce a single person portrait (head to waist or full body)
+Mandatory creative direction for THIS specific avatar:
+- POSE: {pose}
+- CAMERA: {angle}
+- SCENE: {scene}
+- LIGHTING: {light}
 
-Output ONLY the image prompt, nothing else. No quotes, no explanations."""
+Requirements:
+- Close-up portrait: head and shoulders, face fills ~50-60% of frame
+- Style: raw, candid smartphone selfie feel — like an Instagram story, NOT studio photography
+- Describe unique appearance: hair color/style, eye color, skin tone, visible skin texture
+- Slightly tanned skin, natural imperfections, realistic amateur photography feel
+- Square 1:1 format
+- ABSOLUTELY NO TEXT, NO LETTERS, NO WORDS, NO LOGOS in the image
+- Do NOT mention brand names
+
+Output ONLY the image prompt, nothing else."""
 
 
 def _build_image_prompt(text_prompt: str) -> str:
-    """Wrap the Phase 1 output with photography framing for Phase 2."""
+    """Wrap the Phase 1 output with selfie framing for Phase 2."""
     return (
-        f"Professional travel lifestyle photography. {text_prompt} "
-        f"Shot with natural lighting, warm tropical color grading. "
-        f"Shallow depth of field, bokeh background. "
-        f"High quality, detailed, 8K resolution. Photorealistic style."
+        f"A raw, candid, unedited smartphone selfie portrait. {text_prompt} "
+        f"Highly realistic amateur photography, visible skin texture, "
+        f"Instagram story aesthetic. Close-up head and shoulders. "
+        f"ABSOLUTELY NO TEXT, NO LETTERS, NO WORDS, NO LOGOS."
     )
 
 
-def _build_fallback_prompt(name: str, gender: str, attempt: int) -> str:
-    """Build progressively simpler prompts for safety filter retries."""
+def _build_fallback_prompt(name: str, gender: str, mood: str | None, attempt: int) -> str:
+    """Build progressively simpler prompts for retries."""
     age_range = "20-29" if gender == "female" else "25-40"
     pronoun = "woman" if gender == "female" else "man"
-    scene = random.choice(SCENES)
+    scene = random.choice(MOOD_SCENES.get(mood, MOOD_SCENES[None]))
     style = random.choice(FEMALE_STYLES if gender == "female" else MALE_STYLES)
 
     if attempt == 1:
         return (
-            f"Professional travel lifestyle portrait of a {pronoun}, {age_range} years old, "
-            f"{style}, {scene}. "
-            f"Natural golden hour lighting, warm color grading, shallow depth of field. "
-            f"High quality photorealistic style, 8K."
+            f"A raw, candid smartphone selfie of a beautiful {age_range} year old {pronoun}, "
+            f"slightly tanned skin, {style}, {scene}. "
+            f"Close-up headshot, face fills the frame, visible skin texture, "
+            f"Instagram story style. NO TEXT, NO LOGOS."
         )
     elif attempt == 2:
         return (
-            f"Portrait of a friendly {pronoun}, {age_range} years old, "
-            f"in a beautiful tropical setting with palm trees and ocean. "
-            f"Warm natural lighting, travel photography style."
+            f"Close-up selfie portrait of a friendly {pronoun}, {age_range} years old. "
+            f"Warm smile, blurred tropical background. "
+            f"Natural lighting, candid feel. NO TEXT."
         )
     else:
         return (
-            f"Digital art portrait of a {pronoun} traveler in a tropical paradise. "
-            f"Warm colors, golden light, palm trees, ocean view. "
-            f"High quality illustration style."
+            f"Portrait headshot of a {pronoun}, natural smile, "
+            f"blurred green tropical background. Warm lighting. NO TEXT."
         )
+
+
+def _process_and_save(image_bytes: bytes, user_id: int, output_dir: Path) -> tuple[str, int, int]:
+    """Resize to 600px width max, convert to WebP, return (relative_path, w, h)."""
+    image = Image.open(BytesIO(image_bytes))
+    if image.mode in ("RGBA", "P"):
+        image = image.convert("RGB")
+
+    if image.width > 600:
+        ratio = 600.0 / image.width
+        new_h = int(image.height * ratio)
+        image = image.resize((600, new_h), Image.Resampling.LANCZOS)
+
+    filename = f"phantom_{user_id}.webp"
+    save_path = output_dir / filename
+    image.save(save_path, "WEBP", quality=85)
+    return f"avatars/{filename}", image.width, image.height
 
 
 async def generate_one(
@@ -134,6 +217,7 @@ async def generate_one(
     user_id: int,
     name: str,
     gender: str,
+    mood: str | None,
     output_dir: Path,
     dry_run: bool = False,
 ) -> tuple[bool, str]:
@@ -141,7 +225,7 @@ async def generate_one(
 
     # Phase 1: Generate unique prompt via Gemini 3 Flash (retry on 503)
     image_prompt = None
-    meta_prompt = _build_meta_prompt(name, gender)
+    meta_prompt = _build_meta_prompt(name, gender, mood)
     for p1_attempt in range(5):
         try:
             response = await client.aio.models.generate_content(
@@ -149,7 +233,7 @@ async def generate_one(
                 contents=meta_prompt,
             )
             image_prompt = _build_image_prompt(response.text.strip())
-            logger.info("  Phase 1 OK: prompt generated (%d chars)", len(image_prompt))
+            logger.info("  Phase 1 OK: prompt (%d chars)", len(image_prompt))
             break
         except Exception as e:
             if "503" in str(e) or "UNAVAILABLE" in str(e).upper():
@@ -159,56 +243,48 @@ async def generate_one(
                 logger.warning("  Phase 1 FAIL: %s — using fallback", e)
                 break
     if image_prompt is None:
-        image_prompt = _build_fallback_prompt(name, gender, attempt=1)
+        image_prompt = _build_fallback_prompt(name, gender, mood, attempt=1)
         logger.warning("  Phase 1: all retries failed, using fallback prompt")
 
     if dry_run:
-        logger.info("  [DRY RUN] Would generate image with prompt: %s", image_prompt[:100])
+        logger.info("  [DRY RUN] Prompt: %s", image_prompt[:120])
         return True, "dry_run"
 
-    # Phase 2: Generate image with cascade retry
+    # Phase 2: Generate image via Gemini 3.1 Flash Image
     max_attempts = 3
     for attempt in range(max_attempts):
-        prompt = image_prompt if attempt == 0 else _build_fallback_prompt(name, gender, attempt)
+        prompt = image_prompt if attempt == 0 else _build_fallback_prompt(name, gender, mood, attempt)
 
         try:
-            response = await client.aio.models.generate_content(
-                model="gemini-3.1-flash-image-preview",
+            result = await client.aio.models.generate_content(
+                model=IMAGE_MODEL,
                 contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["Image"],
+                    image_config=types.ImageConfig(
+                        aspect_ratio="1:1",
+                    ),
+                ),
             )
-
-            # Extract image from response
-            for part in response.parts:
+            for part in result.parts:
                 if part.inline_data is not None:
-                    # Decode image bytes to PIL
-                    img_bytes = part.inline_data.data
-                    image = Image.open(BytesIO(img_bytes))
-                    if image.mode in ("RGBA", "P"):
-                        image = image.convert("RGB")
+                    rel_path, w, h = _process_and_save(
+                        part.inline_data.data, user_id, output_dir
+                    )
+                    logger.info("  Phase 2 OK: %s (%dx%d)", rel_path.split("/")[1], w, h)
+                    return True, rel_path
 
-                    # Resize if needed
-                    if image.width > 600:
-                        ratio = 600.0 / image.width
-                        new_h = int(image.height * ratio)
-                        image = image.resize((600, new_h), Image.Resampling.LANCZOS)
-
-                    # Save as WebP
-                    filename = f"phantom_{user_id}.webp"
-                    save_path = output_dir / filename
-                    image.save(save_path, "WEBP", quality=85)
-                    logger.info("  Phase 2 OK: saved %s (%dx%d)", filename, image.width, image.height)
-                    return True, f"avatars/{filename}"
-
-            logger.warning("  Phase 2: no image in response (attempt %d/%d)", attempt + 1, max_attempts)
+            logger.warning("  Phase 2: no image (attempt %d/%d)", attempt + 1, max_attempts)
 
         except Exception as e:
-            error_msg = str(e)
-            if "SAFETY" in error_msg.upper() or "blocked" in error_msg.lower():
+            err = str(e)
+            if "SAFETY" in err.upper() or "blocked" in err.lower():
                 logger.warning("  Phase 2: safety filter (attempt %d/%d)", attempt + 1, max_attempts)
+            elif "503" in err or "UNAVAILABLE" in err.upper():
+                logger.info("  Phase 2: 503 retry %d/%d...", attempt + 1, max_attempts)
             else:
-                logger.error("  Phase 2: error (attempt %d/%d): %s", attempt + 1, max_attempts, e)
+                logger.error("  Phase 2: error (attempt %d/%d): %s", attempt + 1, max_attempts, err[:100])
 
-        # Wait before retry
         await asyncio.sleep(2)
 
     return False, "all_attempts_failed"
@@ -240,16 +316,15 @@ async def main():
     )
 
     # Fetch phantoms
-    query = "SELECT id, first_name, gender FROM users WHERE is_phantom = true ORDER BY id"
+    query = "SELECT id, first_name, gender, mood FROM users WHERE is_phantom = true ORDER BY id"
     if args.limit > 0:
         query += f" LIMIT {args.limit} OFFSET {args.offset}"
     phantoms = await conn.fetch(query)
 
     logger.info("=" * 60)
-    logger.info("Phantom Avatar Generator")
-    logger.info("Phantoms to process: %d", len(phantoms))
-    logger.info("Output dir: %s", output_dir)
-    logger.info("Dry run: %s", args.dry_run)
+    logger.info("👻 Phantom Avatar Generator v4")
+    logger.info("Phantoms: %d | Models: Imagen 4.0 → Gemini 3.1", len(phantoms))
+    logger.info("Output: %s", output_dir)
     logger.info("=" * 60)
 
     # Init Gemini client
@@ -263,41 +338,41 @@ async def main():
         user_id = row["id"]
         name = row["first_name"]
         gender = row["gender"]
+        mood = row["mood"]
 
         # Skip if avatar already exists
         existing_path = output_dir / f"phantom_{user_id}.webp"
         if existing_path.exists():
-            logger.info("[%d/%d] SKIP id=%d %s — file exists", i, len(phantoms), user_id, name)
+            logger.info("[%d/%d] SKIP id=%d %s — exists", i, len(phantoms), user_id, name)
             skipped += 1
             continue
 
-        logger.info("[%d/%d] Generating id=%d %s (%s)", i, len(phantoms), user_id, name, gender)
+        logger.info("[%d/%d] 🎨 id=%d %s (%s/%s)", i, len(phantoms), user_id, name, gender, mood or "?")
 
-        ok, result = await generate_one(client, user_id, name, gender, output_dir, args.dry_run)
+        ok, result = await generate_one(client, user_id, name, gender, mood, output_dir, args.dry_run)
 
         if ok and not args.dry_run:
-            # Update DB
             await conn.execute(
                 "UPDATE users SET avatar_path = $1 WHERE id = $2",
                 result, user_id,
             )
             success += 1
-            logger.info("  DB updated: avatar_path = %s", result)
+            logger.info("  DB updated: %s", result)
         elif ok:
             success += 1
         else:
             failed += 1
-            logger.error("  FAILED: %s", result)
+            logger.error("  ❌ FAILED: %s", result)
 
-        # Rate limiting: 1.5-2.5 sec between requests
+        # Rate limiting
         if i < len(phantoms):
-            delay = random.uniform(1.5, 2.5)
+            delay = random.uniform(2.0, 4.0)
             await asyncio.sleep(delay)
 
     await conn.close()
 
     logger.info("=" * 60)
-    logger.info("DONE: %d success, %d failed, %d skipped", success, failed, skipped)
+    logger.info("🎉 DONE: %d success, %d failed, %d skipped", success, failed, skipped)
     logger.info("=" * 60)
 
 
