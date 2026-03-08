@@ -35,9 +35,12 @@ router = APIRouter(prefix="/api/v1/planner", tags=["planner"])
 BKK = ZoneInfo("Asia/Bangkok")
 
 # ── Constants ────────────────────────────────────────────────────────────────
-# Model cascade: try primary first, fallback on persistent errors
-GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
-MAX_RETRIES_PER_MODEL = 2
+# Model cascade: (model_name, max_attempts)
+GEMINI_CASCADE = [
+    ("gemini-3-flash-preview", 2),
+    ("gemini-2.5-flash", 1),
+    ("gemini-3.1-flash-lite-preview", 1),
+]
 ROAD_FACTOR = 1.4       # Haversine → approximate road distance
 SCOOTER_KMH = 25        # Average scooter speed on Koh Phangan
 
@@ -286,16 +289,9 @@ async def generate_plan(
     plan = None
     last_error = None
 
-    for model_name in GEMINI_MODELS:
-        # 2.0-flash doesn't support thinking
-        if "2.0" in model_name:
-            gen_config = types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.7,
-                max_output_tokens=16384,
-                response_mime_type="application/json",
-            )
-        else:
+    for model_name, max_attempts in GEMINI_CASCADE:
+        # Build config per model — only 2.5+ supports thinking
+        if "2.5" in model_name or "3" in model_name:
             gen_config = types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
                 temperature=0.7,
@@ -305,12 +301,19 @@ async def generate_plan(
                     thinking_budget=4096,
                 ),
             )
+        else:
+            gen_config = types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                temperature=0.7,
+                max_output_tokens=16384,
+                response_mime_type="application/json",
+            )
 
-        for attempt in range(1, MAX_RETRIES_PER_MODEL + 1):
+        for attempt in range(1, max_attempts + 1):
             try:
                 logger.info(
                     "Vibe Pilot: calling %s (attempt %d/%d)",
-                    model_name, attempt, MAX_RETRIES_PER_MODEL,
+                    model_name, attempt, max_attempts,
                 )
                 response = client.models.generate_content(
                     model=model_name,
@@ -326,7 +329,7 @@ async def generate_plan(
 
                 plan = json.loads(raw_text)
                 logger.info("Vibe Pilot: success with %s on attempt %d", model_name, attempt)
-                break  # Success — exit retry loop
+                break
 
             except json.JSONDecodeError as exc:
                 last_error = exc
@@ -334,24 +337,20 @@ async def generate_plan(
                     "Vibe Pilot: %s attempt %d — invalid JSON: %s",
                     model_name, attempt, str(exc)[:200],
                 )
-                # Don't retry JSON errors on same model — try next model
-                break
+                break  # JSON error → next model
 
             except Exception as exc:
                 last_error = exc
-                err_str = str(exc)
-                is_retryable = "503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str
                 logger.warning(
-                    "Vibe Pilot: %s attempt %d — %s (retryable=%s)",
-                    model_name, attempt, err_str[:200], is_retryable,
+                    "Vibe Pilot: %s attempt %d — %s",
+                    model_name, attempt, str(exc)[:200],
                 )
-                if is_retryable and attempt < MAX_RETRIES_PER_MODEL:
-                    await asyncio.sleep(1)  # Brief pause before retry
-                    continue
-                break  # Non-retryable or exhausted retries — try next model
+                if attempt < max_attempts:
+                    continue  # Retry immediately, no delay
+                break  # Exhausted retries → next model
 
         if plan is not None:
-            break  # Got a valid plan — exit model cascade
+            break
 
     if plan is None:
         logger.error("Vibe Pilot: all models failed. Last error: %s", last_error)
