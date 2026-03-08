@@ -9,10 +9,9 @@ import logging
 from io import BytesIO
 from pathlib import Path
 
-import cv2
 import httpx
-import numpy as np
 import asyncpg
+import mediapipe as mp
 from PIL import Image
 from google import genai
 
@@ -93,38 +92,39 @@ async def process_avatar_background(
             if resp.status_code == 200:
                 image_bytes = resp.content
 
-                # OpenCV Face Detection
-                nparr = np.frombuffer(image_bytes, np.uint8)
-                img_cv = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                # MediaPipe Face Detection (BlazeFace)
+                image = Image.open(BytesIO(image_bytes))
+                if image.mode in ("RGBA", "P"):
+                    image = image.convert("RGB")
 
-                if img_cv is not None:
-                    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-                    face_cascade = cv2.CascadeClassifier(cascade_path)
-                    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-                    faces = face_cascade.detectMultiScale(
-                        gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-                    )
+                import numpy as np
+                img_rgb = np.array(image)
 
-                    if len(faces) > 0:
-                        is_aesthetic = True
+                with mp.solutions.face_detection.FaceDetection(
+                    model_selection=0, min_detection_confidence=0.7
+                ) as detector:
+                    result = detector.process(img_rgb)
+                    if result.detections:
+                        confidence = result.detections[0].score[0]
+                        is_aesthetic = confidence > 0.85
+                        logger.info(
+                            "Face detected for %s: confidence=%.2f, aesthetic=%s",
+                            telegram_id, confidence, is_aesthetic,
+                        )
 
-                    # Pillow Processing
-                    image = Image.open(BytesIO(image_bytes))
-                    if image.mode in ("RGBA", "P"):
-                        image = image.convert("RGB")
+                # Resize + save as WebP
+                if image.width > 600:
+                    ratio = 600.0 / float(image.width)
+                    new_h = int(float(image.height) * ratio)
+                    image = image.resize((600, new_h), Image.Resampling.LANCZOS)
 
-                    if image.width > 600:
-                        ratio = 600.0 / float(image.width)
-                        new_h = int((float(image.height) * float(ratio)))
-                        image = image.resize((600, new_h), Image.Resampling.LANCZOS)
+                filename = f"real_{telegram_id}.webp"
+                base_dir = Path(settings.MEDIA_DIR) / "avatars"
+                base_dir.mkdir(parents=True, exist_ok=True)
+                save_path = base_dir / filename
 
-                    filename = f"real_{telegram_id}.webp"
-                    base_dir = Path(settings.MEDIA_DIR) / "avatars"
-                    base_dir.mkdir(parents=True, exist_ok=True)
-                    save_path = base_dir / filename
-
-                    image.save(save_path, "WEBP", quality=85)
-                    avatar_path = f"avatars/{filename}"
+                image.save(save_path, "WEBP", quality=85)
+                avatar_path = f"avatars/{filename}"
             else:
                 logger.warning("Failed to download image for %s. Status: %s", telegram_id, resp.status_code)
     except Exception as e:
