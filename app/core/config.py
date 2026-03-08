@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # ── Telegram & AI ────────────────────────────────────────────────
     BOT_TOKEN: str
     GEMINI_API_KEY: str
+    MAPBOX_TOKEN: str = ""
 
     # ── CORS ─────────────────────────────────────────────────────────
     CORS_ORIGINS: list[str] = ["*"]

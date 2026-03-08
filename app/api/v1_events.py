@@ -145,6 +145,8 @@ def _build_event(row: asyncpg.Record, lang: str, today: date, tomorrow: date, no
         "source_chat_title": row.get("source_chat_title"),
         "rsvps": (filter_score or 0) * 2 if filter_score else None,
         "facepileUrls": [],
+        "distance_km": None,
+        "bike_minutes": None,
     }
 
 
@@ -162,6 +164,8 @@ async def list_events(
     ),
     limit: int = Query(default=30, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    user_lat: Optional[float] = Query(default=None, alias="lat"),
+    user_lng: Optional[float] = Query(default=None, alias="lng"),
     pool: asyncpg.Pool = Depends(get_pool),
     _user_id: int = Depends(get_current_user_id),   # enforces Bearer JWT
 ) -> dict:
@@ -255,6 +259,11 @@ async def list_events(
 
     total = rows[0]["total_count"] if rows else 0
     events = [_build_event(r, lang, today, tomorrow, now_bkk) for r in rows]
+
+    # Enrich with Mapbox road distances if user sent GPS
+    if user_lat is not None and user_lng is not None:
+        from app.services.distance_service import enrich_with_distances
+        await enrich_with_distances(events, user_lat, user_lng)
 
     return {
         "events": events,
