@@ -144,6 +144,7 @@ def _build_event(row: asyncpg.Record, lang: str, today: date, tomorrow: date, no
         "imageUrl": f"{MEDIA_BASE}/{image_path}" if image_path else None,
         "source_chat_title": row.get("source_chat_title"),
         "rsvps": (filter_score or 0) * 2 if filter_score else None,
+        "attendeeCount": 0,
         "facepileUrls": [],
         "distance_km": None,
         "bike_minutes": None,
@@ -259,6 +260,35 @@ async def list_events(
 
     total = rows[0]["total_count"] if rows else 0
     events = [_build_event(r, lang, today, tomorrow, now_bkk) for r in rows]
+
+    # Enrich with facepile avatars ("Кто пойдёт?")
+    if events:
+        from app.services.facepile_service import get_facepile_batch
+
+        # Get viewer gender for gender-targeted phantom selection
+        viewer_gender = None
+        try:
+            async with pool.acquire() as conn:
+                viewer_gender = await conn.fetchval(
+                    "SELECT gender FROM users WHERE id = $1", _user_id
+                )
+        except Exception:
+            pass
+
+        event_ids = [int(ev["id"]) for ev in events]
+        event_categories = {int(ev["id"]): ev.get("category", "") for ev in events}
+
+        try:
+            facepile_data = await get_facepile_batch(
+                event_ids, event_categories, viewer_gender, pool
+            )
+            for ev in events:
+                fp = facepile_data.get(int(ev["id"]))
+                if fp:
+                    ev["attendeeCount"] = fp["count"]
+                    ev["facepileUrls"] = fp["avatarUrls"]
+        except Exception as exc:
+            logger.warning("Facepile enrichment failed: %s", exc)
 
     # Enrich with Mapbox road distances if user sent GPS
     if user_lat is not None and user_lng is not None:
