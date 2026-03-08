@@ -178,3 +178,26 @@ async def my_vibe(
         )
 
     return result
+
+
+# ── DELETE /api/v1/swipes/reset ──────────────────────────────────────────────
+
+@router.delete("/reset", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_swipes(
+    pool: asyncpg.Pool = Depends(get_pool),
+    user_id: int = Depends(get_current_user_id),
+) -> Response:
+    """Delete ALL swipes for the current user (debug/QA only)."""
+    try:
+        async with pool.acquire() as conn:
+            deleted = await conn.execute(
+                "DELETE FROM user_swipes WHERE user_id = $1", user_id
+            )
+            logger.info("Reset swipes for user %d: %s", user_id, deleted)
+    except Exception as exc:
+        logger.error("Error resetting swipes for user %d: %s", user_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reset swipes",
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
