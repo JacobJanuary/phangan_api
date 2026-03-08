@@ -139,18 +139,28 @@ async def generate_one(
 ) -> tuple[bool, str]:
     """Generate avatar for a single phantom user. Returns (success, message)."""
 
-    # Phase 1: Generate unique prompt via Gemini 3 Flash
-    try:
-        meta_prompt = _build_meta_prompt(name, gender)
-        response = await client.aio.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=meta_prompt,
-        )
-        image_prompt = _build_image_prompt(response.text.strip())
-        logger.info("  Phase 1 OK: prompt generated (%d chars)", len(image_prompt))
-    except Exception as e:
-        logger.warning("  Phase 1 FAIL: %s — using fallback prompt", e)
+    # Phase 1: Generate unique prompt via Gemini 3 Flash (retry on 503)
+    image_prompt = None
+    meta_prompt = _build_meta_prompt(name, gender)
+    for p1_attempt in range(5):
+        try:
+            response = await client.aio.models.generate_content(
+                model="gemini-3-flash-preview",
+                contents=meta_prompt,
+            )
+            image_prompt = _build_image_prompt(response.text.strip())
+            logger.info("  Phase 1 OK: prompt generated (%d chars)", len(image_prompt))
+            break
+        except Exception as e:
+            if "503" in str(e) or "UNAVAILABLE" in str(e).upper():
+                logger.info("  Phase 1: 503 retry %d/5...", p1_attempt + 1)
+                await asyncio.sleep(1)
+            else:
+                logger.warning("  Phase 1 FAIL: %s — using fallback", e)
+                break
+    if image_prompt is None:
         image_prompt = _build_fallback_prompt(name, gender, attempt=1)
+        logger.warning("  Phase 1: all retries failed, using fallback prompt")
 
     if dry_run:
         logger.info("  [DRY RUN] Would generate image with prompt: %s", image_prompt[:100])
