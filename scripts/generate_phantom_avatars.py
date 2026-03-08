@@ -290,11 +290,15 @@ async def generate_one(
     return False, "all_attempts_failed"
 
 
+CONCURRENCY = 10  # Number of parallel workers
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Generate phantom avatars")
     parser.add_argument("--limit", type=int, default=0, help="Limit number of phantoms (0=all)")
     parser.add_argument("--dry-run", action="store_true", help="Only generate prompts, skip images")
     parser.add_argument("--offset", type=int, default=0, help="Start from Nth phantom")
+    parser.add_argument("--workers", type=int, default=CONCURRENCY, help="Parallel workers")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -306,70 +310,90 @@ async def main():
     output_dir = Path(settings.MEDIA_DIR) / "avatars"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Connect to DB
-    conn = await asyncpg.connect(
+    # Connection pool for concurrent DB writes
+    pool = await asyncpg.create_pool(
         user=settings.DB_USER,
         password=settings.DB_PASSWORD,
         database=settings.DB_NAME,
         host=settings.DB_HOST,
         port=settings.DB_PORT,
+        min_size=2,
+        max_size=args.workers + 2,
     )
 
     # Fetch phantoms
-    query = "SELECT id, first_name, gender, mood FROM users WHERE is_phantom = true ORDER BY id"
-    if args.limit > 0:
-        query += f" LIMIT {args.limit} OFFSET {args.offset}"
-    phantoms = await conn.fetch(query)
+    async with pool.acquire() as conn:
+        query = "SELECT id, first_name, gender, mood FROM users WHERE is_phantom = true ORDER BY id"
+        if args.limit > 0:
+            query += f" LIMIT {args.limit} OFFSET {args.offset}"
+        phantoms = await conn.fetch(query)
+
+    # Filter out already generated
+    todo = []
+    skipped = 0
+    for row in phantoms:
+        existing = output_dir / f"phantom_{row['id']}.webp"
+        if existing.exists():
+            skipped += 1
+        else:
+            todo.append(row)
 
     logger.info("=" * 60)
-    logger.info("👻 Phantom Avatar Generator v4")
-    logger.info("Phantoms: %d | Models: Imagen 4.0 → Gemini 3.1", len(phantoms))
+    logger.info("👻 Phantom Avatar Generator v4 — %d workers", args.workers)
+    logger.info("Total: %d | Todo: %d | Skipped: %d", len(phantoms), len(todo), skipped)
+    logger.info("Model: %s", IMAGE_MODEL)
     logger.info("Output: %s", output_dir)
     logger.info("=" * 60)
+
+    if not todo:
+        logger.info("Nothing to do!")
+        await pool.close()
+        return
 
     # Init Gemini client
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
+    # Concurrency control
+    semaphore = asyncio.Semaphore(args.workers)
     success = 0
     failed = 0
-    skipped = 0
+    lock = asyncio.Lock()
+    total = len(todo)
 
-    for i, row in enumerate(phantoms, 1):
+    async def worker(idx: int, row):
+        nonlocal success, failed
         user_id = row["id"]
         name = row["first_name"]
         gender = row["gender"]
         mood = row["mood"]
 
-        # Skip if avatar already exists
-        existing_path = output_dir / f"phantom_{user_id}.webp"
-        if existing_path.exists():
-            logger.info("[%d/%d] SKIP id=%d %s — exists", i, len(phantoms), user_id, name)
-            skipped += 1
-            continue
+        async with semaphore:
+            logger.info("[%d/%d] 🎨 id=%d %s (%s/%s)", idx, total, user_id, name, gender, mood or "?")
 
-        logger.info("[%d/%d] 🎨 id=%d %s (%s/%s)", i, len(phantoms), user_id, name, gender, mood or "?")
+            ok, result = await generate_one(client, user_id, name, gender, mood, output_dir, args.dry_run)
 
-        ok, result = await generate_one(client, user_id, name, gender, mood, output_dir, args.dry_run)
+            if ok and not args.dry_run:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE users SET avatar_path = $1 WHERE id = $2",
+                        result, user_id,
+                    )
+                async with lock:
+                    success += 1
+                logger.info("  ✅ id=%d DB updated: %s", user_id, result)
+            elif ok:
+                async with lock:
+                    success += 1
+            else:
+                async with lock:
+                    failed += 1
+                logger.error("  ❌ id=%d FAILED: %s", user_id, result)
 
-        if ok and not args.dry_run:
-            await conn.execute(
-                "UPDATE users SET avatar_path = $1 WHERE id = $2",
-                result, user_id,
-            )
-            success += 1
-            logger.info("  DB updated: %s", result)
-        elif ok:
-            success += 1
-        else:
-            failed += 1
-            logger.error("  ❌ FAILED: %s", result)
+    # Launch all workers
+    tasks = [worker(i, row) for i, row in enumerate(todo, 1)]
+    await asyncio.gather(*tasks)
 
-        # Rate limiting
-        if i < len(phantoms):
-            delay = random.uniform(2.0, 4.0)
-            await asyncio.sleep(delay)
-
-    await conn.close()
+    await pool.close()
 
     logger.info("=" * 60)
     logger.info("🎉 DONE: %d success, %d failed, %d skipped", success, failed, skipped)
