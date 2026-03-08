@@ -125,6 +125,7 @@ def _build_event(row: asyncpg.Record, lang: str, today: date, tomorrow: date, no
 
     return {
         "id": str(row["id"]),
+        "event_date": ev_date.isoformat() if ev_date else None,
         "title": _resolve_text(row["title"], lang),
         "summary": raw_summary[:120] if raw_summary else "",
         "description": _resolve_text(row["description"], lang),
