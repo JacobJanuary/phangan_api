@@ -305,11 +305,12 @@ async def generate_plan(
     gemini_input_str = json.dumps(gemini_input, sort_keys=True, ensure_ascii=False)
     input_hash = hashlib.sha256(gemini_input_str.encode("utf-8")).hexdigest()
 
-    cached_row = await pool.fetchrow("""
-        SELECT input_hash, plan_json
-        FROM vibe_pilot_cache
-        WHERE user_id = $1 AND target_date = $2
-    """, user_id, target_date)
+    async with pool.acquire() as conn:
+        cached_row = await conn.fetchrow("""
+            SELECT input_hash, plan_json
+            FROM vibe_pilot_cache
+            WHERE user_id = $1 AND target_date = $2
+        """, user_id, target_date)
 
     plan = None
     if cached_row and cached_row["input_hash"] == input_hash:
@@ -364,11 +365,15 @@ async def generate_plan(
                         "Vibe Pilot: calling %s (attempt %d/%d)",
                         model_name, attempt, max_attempts,
                     )
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=user_prompt,
-                        config=gen_config,
-                    )
+                    # 🚀 CRITICAL: Execute the slow SYNCHRONOUS Gemini call in a separate thread
+                    # to prevent blocking the FastAPI Event Loop (allowing other users / tabs to load)
+                    def _call_ai():
+                        return client.models.generate_content(
+                            model=model_name,
+                            contents=user_prompt,
+                            config=gen_config,
+                        )
+                    response = await asyncio.to_thread(_call_ai)
 
                     raw_text = response.text.strip()
                     if raw_text.startswith("```"):
