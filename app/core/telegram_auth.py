@@ -44,8 +44,6 @@ def validate_telegram_data(init_data: str, bot_token: str | None = None) -> dict
         
     received_hash = parsed_dict.pop("hash")
     
-    # CRITICAL: Since Telegram API 7.0, 'signature' must also be EXCLUDED from the data-check-string
-    parsed_dict.pop("signature", None)
     # Sort keys alphabetically and format data-check-string
     data_check_list = [f"{k}={v}" for k, v in sorted(parsed_dict.items())]
     data_check_string = "\n".join(data_check_list)
