@@ -421,8 +421,9 @@ async def update_event(
                     update_fields.append(f"{field} = COALESCE({field}, '{{}}') || ${idx}::jsonb")
                     params.append(json.dumps(value, ensure_ascii=False))
                 elif field == "event_date":
-                    update_fields.append(f"{field} = ${idx}::date")
-                    params.append(value)
+                    from datetime import date as _date
+                    update_fields.append(f"{field} = ${idx}")
+                    params.append(_date.fromisoformat(value))
                 else:
                     update_fields.append(f"{field} = ${idx}")
                     params.append(value)
