@@ -331,8 +331,8 @@ async def generate_plan(
         """, user_id, target_date)
 
     plan = None
-    if not body.force_refresh and cached_row and cached_row["input_hash"] == input_hash:
-        logger.info("Vibe Pilot: Cache HIT for user %s, date %s", user_id, target_date)
+    if not body.force_refresh and cached_row:
+        logger.info("Vibe Pilot: Cache HIT for user %s, date %s (hash ignored to preserve UX)", user_id, target_date)
         plan = json.loads(cached_row["plan_json"])
 
     if not plan:
