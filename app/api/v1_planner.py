@@ -281,7 +281,7 @@ async def generate_plan(
     gemini_input_str = json.dumps(gemini_input, sort_keys=True, ensure_ascii=False)
     input_hash = hashlib.sha256(gemini_input_str.encode("utf-8")).hexdigest()
 
-    cached_row = await conn.fetchrow("""
+    cached_row = await pool.fetchrow("""
         SELECT input_hash, plan_json
         FROM vibe_pilot_cache
         WHERE user_id = $1 AND target_date = $2
@@ -375,8 +375,8 @@ async def generate_plan(
                 detail="AI planner is temporarily unavailable. Please try again.",
             )
 
-        # Save to cache
-        await conn.execute("""
+        # Save to cache using pool to avoid holding connection during Gemini generation
+        await pool.execute("""
             INSERT INTO vibe_pilot_cache (user_id, target_date, input_hash, plan_json)
             VALUES ($1, $2, $3, $4)
             ON CONFLICT (user_id, target_date)
