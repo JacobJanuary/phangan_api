@@ -21,7 +21,7 @@ import asyncpg
 logger = logging.getLogger(__name__)
 
 # Media base URL for avatar paths
-MEDIA_BASE = "https://media.fastpump.fun"
+MEDIA_BASE = "https://api.fastpump.fun/api/media"
 
 # ── Mood mapping: event category → phantom mood ─────────────────────────────
 CATEGORY_TO_MOOD: dict[str, str] = {
