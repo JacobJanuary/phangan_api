@@ -381,7 +381,7 @@ async def generate_plan(
             VALUES ($1, $2, $3, $4)
             ON CONFLICT (user_id, target_date)
             DO UPDATE SET input_hash = EXCLUDED.input_hash, plan_json = EXCLUDED.plan_json, created_at = timezone('utc', now())
-        """, user_id, target_date, json.dumps(plan, ensure_ascii=False))
+        """, user_id, target_date, input_hash, json.dumps(plan, ensure_ascii=False))
 
     # ── 8. Enrich timeline with full event data ──────────────────────────
     events_by_id = {e["id"]: e for e in events_data}
