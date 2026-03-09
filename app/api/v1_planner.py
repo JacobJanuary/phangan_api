@@ -38,9 +38,9 @@ BKK = ZoneInfo("Asia/Bangkok")
 # ── Constants ────────────────────────────────────────────────────────────────
 # Model cascade: (model_name, max_attempts)
 GEMINI_CASCADE = [
-    ("gemini-3-flash-preview", 2),
+    ("gemini-3.1-flash-lite-preview", 2),
+    ("gemini-3-flash-preview", 1),
     ("gemini-2.5-flash", 1),
-    ("gemini-3.1-flash-lite-preview", 1),
 ]
 ROAD_FACTOR = 1.4       # Haversine → approximate road distance
 SCOOTER_KMH = 25        # Average scooter speed on Koh Phangan
