@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Path as FastApiPath, status
+from fastapi import APIRouter, HTTPException, Path as FastApiPath, status, UploadFile, File
 from fastapi.responses import FileResponse
 
 from app.core.config import get_settings
@@ -100,3 +101,44 @@ async def get_media(file_path: str = FastApiPath(...)) -> FileResponse:
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+@router.post(
+    "/media/upload-story",
+    summary="Upload generated story image",
+    description="Receives a Blob from the frontend, saves it to /media/stories/, and returns a public URL.",
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_story_image(file: UploadFile = File(...)):
+    """
+    Upload a generated story card for Telegram sharing.
+    Returns: {"url": "https://api.fastpump.fun/api/v1/media/stories/..."}
+    """
+    if file.content_type not in ["image/png", "image/jpeg", "image/webp"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Forbidden format. Only PNG, JPEG, and WebP are allowed."
+        )
+
+    settings = get_settings()
+    base_dir = Path(settings.MEDIA_DIR).resolve()
+    stories_dir = base_dir / "stories"
+    stories_dir.mkdir(parents=True, exist_ok=True)
+
+    file_ext = file.filename.split(".")[-1].lower() if file.filename and "." in file.filename else "png"
+    if file_ext not in ["png", "jpg", "jpeg", "webp"]:
+        file_ext = "png"
+
+    filename = f"story_{uuid.uuid4().hex}.{file_ext}"
+    filepath = stories_dir / filename
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File too large. Maximum size is 5MB."
+        )
+
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    return {"url": f"https://api.fastpump.fun/api/media/stories/{filename}"}
