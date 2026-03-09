@@ -145,6 +145,7 @@ def _build_event(row: asyncpg.Record, lang: str, today: date, tomorrow: date, no
         "price_thb": price_thb if price_thb is not None else 0,
         "imageUrl": f"{MEDIA_BASE}/{image_path}" if image_path else None,
         "source_chat_title": row.get("source_chat_title"),
+        "sender_id": str(row["sender_id"]) if row.get("sender_id") else None,
         "rsvps": (filter_score or 0) * 2 if filter_score else None,
         "attendeeCount": 0,
         "facepileUrls": [],
@@ -307,6 +308,61 @@ async def list_events(
             "category": category or "all",
         },
     }
+
+
+@router.get("/events/{event_id}", summary="Get a single event by ID")
+async def get_event(
+    event_id: int,
+    lang: Literal["en", "ru"] = Query(default="ru", description="Response language"),
+    pool: asyncpg.Pool = Depends(get_pool),
+    _user_id: int = Depends(get_current_user_id),
+):
+    now_bkk = datetime.now(ZoneInfo("Asia/Bangkok"))
+    today = now_bkk.date()
+    tomorrow = date.fromordinal(today.toordinal() + 1)
+    
+    query = """
+        SELECT
+            e.id,
+            e.title,
+            e.summary,
+            e.description,
+            e.category,
+            e.event_date,
+            e.event_time,
+            e.location_name,
+            e.price_thb,
+            e.filter_score,
+            e.image_path,
+            e.source_chat_title,
+            e.sender_id,
+            v.name            AS venue_name,
+            v.lat             AS venue_lat,
+            v.lng             AS venue_lng,
+            v.google_maps_url AS venue_google_maps_url
+        FROM events e
+        LEFT JOIN venues v ON e.venue_id = v.id
+        WHERE e.id = $1
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(query, event_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
+        
+        event_dict = _build_event(row, lang, today, tomorrow, now_bkk)
+        
+        from app.services.facepile_service import get_facepile_batch
+        viewer_gender = await conn.fetchval("SELECT gender FROM users WHERE id = $1", _user_id)
+        try:
+            fp_data = await get_facepile_batch([event_id], {event_id: event_dict.get("category", "")}, viewer_gender, pool)
+            fp = fp_data.get(event_id)
+            if fp:
+                event_dict["attendeeCount"] = fp["count"]
+                event_dict["facepileUrls"] = fp["avatarUrls"]
+        except Exception:
+            pass
+            
+        return event_dict
 
 
 @router.put("/events/{event_id}", summary="Update an event (Only Author)")
