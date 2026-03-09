@@ -10,6 +10,7 @@ POST /api/v1/planner/generate
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -276,88 +277,111 @@ async def generate_plan(
         "distance_matrix": distance_matrix,
     }
 
-    # ── 7. Call Gemini with retry + model cascade ────────────────────────
-    settings = get_settings()
-    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    # ── 6.5. Check Cache ─────────────────────────────────────────────────
+    gemini_input_str = json.dumps(gemini_input, sort_keys=True, ensure_ascii=False)
+    input_hash = hashlib.sha256(gemini_input_str.encode("utf-8")).hexdigest()
 
-    user_prompt = (
-        f"Plan the optimal day for {body.date}. "
-        f"Language: {'Russian' if body.lang == 'ru' else 'English'}.\n\n"
-        f"Input data:\n{json.dumps(gemini_input, ensure_ascii=False, indent=2)}"
-    )
+    cached_row = await conn.fetchrow("""
+        SELECT input_hash, plan_json
+        FROM vibe_pilot_cache
+        WHERE user_id = $1 AND target_date = $2
+    """, user_id, target_date)
 
     plan = None
-    last_error = None
+    if cached_row and cached_row["input_hash"] == input_hash:
+        logger.info("Vibe Pilot: Cache HIT for user %s, date %s", user_id, target_date)
+        plan = json.loads(cached_row["plan_json"])
 
-    for model_name, max_attempts in GEMINI_CASCADE:
-        # Build config per model — only 2.5+ supports thinking
-        if "2.5" in model_name or "3" in model_name:
-            gen_config = types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.7,
-                max_output_tokens=16384,
-                response_mime_type="application/json",
-                thinking_config=types.ThinkingConfig(
-                    thinking_budget=4096,
-                ),
-            )
-        else:
-            gen_config = types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.7,
-                max_output_tokens=16384,
-                response_mime_type="application/json",
-            )
+    if not plan:
+        # ── 7. Call Gemini with retry + model cascade ────────────────────────
+        settings = get_settings()
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-        for attempt in range(1, max_attempts + 1):
-            try:
-                logger.info(
-                    "Vibe Pilot: calling %s (attempt %d/%d)",
-                    model_name, attempt, max_attempts,
+        user_prompt = (
+            f"Plan the optimal day for {body.date}. "
+            f"Language: {'Russian' if body.lang == 'ru' else 'English'}.\n\n"
+            f"Input data:\n{json.dumps(gemini_input, ensure_ascii=False, indent=2)}"
+        )
+
+        last_error = None
+
+        for model_name, max_attempts in GEMINI_CASCADE:
+            # Build config per model — only 2.5+ supports thinking
+            if "2.5" in model_name or "3" in model_name:
+                gen_config = types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    temperature=0.7,
+                    max_output_tokens=16384,
+                    response_mime_type="application/json",
+                    thinking_config=types.ThinkingConfig(
+                        thinking_budget=4096,
+                    ),
                 )
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=user_prompt,
-                    config=gen_config,
+            else:
+                gen_config = types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    temperature=0.7,
+                    max_output_tokens=16384,
+                    response_mime_type="application/json",
                 )
 
-                raw_text = response.text.strip()
-                if raw_text.startswith("```"):
-                    raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
-                if raw_text.endswith("```"):
-                    raw_text = raw_text[:-3].strip()
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    logger.info(
+                        "Vibe Pilot: calling %s (attempt %d/%d)",
+                        model_name, attempt, max_attempts,
+                    )
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=user_prompt,
+                        config=gen_config,
+                    )
 
-                plan = json.loads(raw_text)
-                logger.info("Vibe Pilot: success with %s on attempt %d", model_name, attempt)
+                    raw_text = response.text.strip()
+                    if raw_text.startswith("```"):
+                        raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
+                    if raw_text.endswith("```"):
+                        raw_text = raw_text[:-3].strip()
+
+                    plan = json.loads(raw_text)
+                    logger.info("Vibe Pilot: success with %s on attempt %d", model_name, attempt)
+                    break
+
+                except json.JSONDecodeError as exc:
+                    last_error = exc
+                    logger.warning(
+                        "Vibe Pilot: %s attempt %d — invalid JSON: %s",
+                        model_name, attempt, str(exc)[:200],
+                    )
+                    break  # JSON error → next model
+
+                except Exception as exc:
+                    last_error = exc
+                    logger.warning(
+                        "Vibe Pilot: %s attempt %d — %s",
+                        model_name, attempt, str(exc)[:200],
+                    )
+                    if attempt < max_attempts:
+                        continue  # Retry immediately, no delay
+                    break  # Exhausted retries → next model
+
+            if plan is not None:
                 break
 
-            except json.JSONDecodeError as exc:
-                last_error = exc
-                logger.warning(
-                    "Vibe Pilot: %s attempt %d — invalid JSON: %s",
-                    model_name, attempt, str(exc)[:200],
-                )
-                break  # JSON error → next model
+        if plan is None:
+            logger.error("Vibe Pilot: all models failed. Last error: %s", last_error)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="AI planner is temporarily unavailable. Please try again.",
+            )
 
-            except Exception as exc:
-                last_error = exc
-                logger.warning(
-                    "Vibe Pilot: %s attempt %d — %s",
-                    model_name, attempt, str(exc)[:200],
-                )
-                if attempt < max_attempts:
-                    continue  # Retry immediately, no delay
-                break  # Exhausted retries → next model
-
-        if plan is not None:
-            break
-
-    if plan is None:
-        logger.error("Vibe Pilot: all models failed. Last error: %s", last_error)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="AI planner is temporarily unavailable. Please try again.",
-        )
+        # Save to cache
+        await conn.execute("""
+            INSERT INTO vibe_pilot_cache (user_id, target_date, input_hash, plan_json)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, target_date)
+            DO UPDATE SET input_hash = EXCLUDED.input_hash, plan_json = EXCLUDED.plan_json, created_at = timezone('utc', now())
+        """, user_id, target_date, json.dumps(plan, ensure_ascii=False))
 
     # ── 8. Enrich timeline with full event data ──────────────────────────
     events_by_id = {e["id"]: e for e in events_data}
