@@ -32,17 +32,20 @@ def validate_telegram_data(init_data: str, bot_token: str | None = None) -> dict
         bot_token = settings.BOT_TOKEN
 
     # Parse query string
+    logger.error(f"DEBUG INITDATA RAW (len={len(init_data)}): {init_data}")
     # We must use standard parse_qsl to handle all URL-encoded characters (like %22 -> ")
     parsed_items = urllib.parse.parse_qsl(init_data, keep_blank_values=True)
     parsed_dict = dict(parsed_items)
+    logger.error(f"DEBUG PARSED_DICT: {list(parsed_dict.keys())}")
 
     if "hash" not in parsed_dict:
         logger.error("Missing 'hash' in initData")
         raise HTTPException(status_code=403, detail="Invalid Telegram signature")
         
     received_hash = parsed_dict.pop("hash")
-    # Note: 'signature' must remain IN the dictionary for HMAC-SHA256 hash verification
     
+    # CRITICAL: Since Telegram API 7.0, 'signature' must also be EXCLUDED from the data-check-string
+    parsed_dict.pop("signature", None)
     # Sort keys alphabetically and format data-check-string
     data_check_list = [f"{k}={v}" for k, v in sorted(parsed_dict.items())]
     data_check_string = "\n".join(data_check_list)

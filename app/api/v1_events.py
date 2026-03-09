@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.dependencies import get_current_user_id
 from app.db.database import get_pool
+from app.schemas.events import EventUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +239,7 @@ async def list_events(
             e.filter_score,
             e.image_path,
             e.source_chat_title,
+            e.sender_id,
             v.name            AS venue_name,
             v.lat             AS venue_lat,
             v.lng             AS venue_lng,
@@ -305,3 +307,87 @@ async def list_events(
             "category": category or "all",
         },
     }
+
+
+@router.put("/events/{event_id}", summary="Update an event (Only Author)")
+async def update_event(
+    event_id: int,
+    payload: EventUpdate,
+    pool: asyncpg.Pool = Depends(get_pool),
+    current_user_id: int = Depends(get_current_user_id),
+):
+    """
+    Updates an event's title, summary, description, category, date, time, location, or price.
+    Only the original author (matching sender_id) can perform this action.
+    """
+    async with pool.acquire() as conn:
+        # 1. Verify existence and ownership
+        row = await conn.fetchrow("SELECT sender_id FROM events WHERE id = $1", event_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+        
+        if row["sender_id"] != current_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to edit this event"
+            )
+
+        # 2. Build dynamic update query
+        update_fields = []
+        params = []
+        idx = 1
+
+        for field, value in payload.model_dump(exclude_unset=True).items():
+            if value is not None:
+                if field in ("title", "summary", "description"):
+                    import json
+                    update_fields.append(f"{field} = ${idx}::jsonb")
+                    params.append(json.dumps(value, ensure_ascii=False))
+                elif field == "event_date":
+                    update_fields.append(f"{field} = ${idx}::date")
+                    params.append(value)
+                else:
+                    update_fields.append(f"{field} = ${idx}")
+                    params.append(value)
+                idx += 1
+
+        if not update_fields:
+            return {"status": "ok", "message": "No fields to update"}
+
+        params.append(event_id)
+        query = f"""
+            UPDATE events
+            SET {', '.join(update_fields)}
+            WHERE id = ${idx}
+        """
+
+        await conn.execute(query, *params)
+        return {"status": "ok", "message": "Event updated successfully"}
+
+
+@router.delete("/events/{event_id}", summary="Delete an event (Only Author)")
+async def delete_event(
+    event_id: int,
+    pool: asyncpg.Pool = Depends(get_pool),
+    current_user_id: int = Depends(get_current_user_id),
+):
+    """
+    Deletes an event from the database. Only the original author can perform this action.
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT sender_id FROM events WHERE id = $1", event_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+        
+        if row["sender_id"] != current_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to delete this event"
+            )
+
+        await conn.execute("DELETE FROM events WHERE id = $1", event_id)
+        
+        # Also clean up related swipes to prevent orphaned constraints
+        await conn.execute("DELETE FROM user_swipes WHERE event_id = $1", event_id)
+
+        return {"status": "ok", "message": "Event deleted successfully"}
