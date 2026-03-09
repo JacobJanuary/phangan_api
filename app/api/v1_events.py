@@ -12,7 +12,7 @@ from typing import Any, Literal, Optional
 from zoneinfo import ZoneInfo
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from app.core.dependencies import get_current_user_id
 from app.db.database import get_pool
@@ -462,3 +462,108 @@ async def delete_event(
         await conn.execute("DELETE FROM user_swipes WHERE event_id = $1", event_id)
 
         return {"status": "ok", "message": "Event deleted successfully"}
+
+
+@router.post(
+    "/events/{event_id}/image",
+    summary="Upload / replace event cover image (Only Author)",
+    status_code=status.HTTP_200_OK,
+)
+async def upload_event_image(
+    event_id: int,
+    file: UploadFile = File(...),
+    pool: asyncpg.Pool = Depends(get_pool),
+    current_user_id: int = Depends(get_current_user_id),
+):
+    """
+    Upload or replace an event's cover image.
+    Pipeline (mirrors TG_parcer):
+      1. Validate MIME type (JPEG, PNG, WebP only)
+      2. Read up to 5 MB
+      3. Convert to RGB
+      4. Resize to max 600px width (LANCZOS)
+      5. Save as WebP (quality=85, method=6)
+      6. Update events.image_path in DB
+    Only the original author (sender_id) can upload.
+    """
+    # ── 1. Validate MIME ─────────────────────────────────────────────────
+    ALLOWED_MIMES = {"image/jpeg", "image/png", "image/webp"}
+    if file.content_type not in ALLOWED_MIMES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported format '{file.content_type}'. Allowed: JPEG, PNG, WebP.",
+        )
+
+    # ── 2. Read & size check (5 MB max) ──────────────────────────────────
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File too large. Maximum size is 5 MB.",
+        )
+
+    async with pool.acquire() as conn:
+        # ── 3. Verify existence & ownership ──────────────────────────────
+        row = await conn.fetchrow(
+            "SELECT sender_id, category, image_path FROM events WHERE id = $1",
+            event_id,
+        )
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+        if row["sender_id"] != current_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to edit this event",
+            )
+
+        # ── 4. Process image (same as TG_parcer) ────────────────────────
+        import os
+        from io import BytesIO
+        from pathlib import Path
+        from PIL import Image
+
+        image = Image.open(BytesIO(content))
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+
+        # Resize to max 600px width for mobile (Retina-ready)
+        target_width = 600
+        w, h = image.size
+        if w > target_width:
+            target_height = int(h * (target_width / w))
+            resample_filter = getattr(Image, "Resampling", Image).LANCZOS
+            image = image.resize((target_width, target_height), resample_filter)
+
+        # Save as WebP
+        category = (row["category"] or "other").lower()
+        filename = f"event_{category}_{os.urandom(4).hex()}.webp"
+        settings = get_settings()
+        media_dir = Path(settings.MEDIA_DIR)
+        media_dir.mkdir(parents=True, exist_ok=True)
+        filepath = media_dir / filename
+
+        image.save(str(filepath), "WEBP", quality=85, method=6)
+        logger.info("📸 Event %d: saved image %s (%dx%d)", event_id, filename, image.width, image.height)
+
+        # ── 5. Delete old image file if it exists ────────────────────────
+        old_path = row["image_path"]
+        if old_path:
+            old_file = media_dir / old_path
+            if old_file.is_file():
+                try:
+                    old_file.unlink()
+                    logger.info("🗑️ Deleted old image: %s", old_path)
+                except OSError:
+                    pass
+
+        # ── 6. Update DB ─────────────────────────────────────────────────
+        await conn.execute(
+            "UPDATE events SET image_path = $1 WHERE id = $2",
+            filename, event_id,
+        )
+
+    return {
+        "status": "ok",
+        "message": "Image uploaded successfully",
+        "imageUrl": f"{MEDIA_BASE}/{filename}",
+    }
