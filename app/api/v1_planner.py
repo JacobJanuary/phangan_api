@@ -158,6 +158,11 @@ async def generate_plan(
             detail="Invalid date format. Use YYYY-MM-DD.",
         )
 
+    # Stabilize GPS coordinates to a ~1.1km grid for consistent caching.
+    # This prevents minor movement (e.g., walking 10 meters) from regenerating the day plan.
+    body.lat = round(body.lat, 2)
+    body.lng = round(body.lng, 2)
+
     async with pool.acquire() as conn:
         # ── 1. Fetch user profile ────────────────────────────────────────
         user_row = await conn.fetchrow(
@@ -186,6 +191,7 @@ async def generate_plan(
                 "plan_name": "Нет событий" if body.lang == "ru" else "No events",
                 "date": body.date,
                 "total_events": 0,
+                "saved_events_count": 0,
                 "timeline": [],
                 "skipped": [],
                 "ai_note": "У тебя нет сохранённых событий на этот день. Свайпни пару карточек!" if body.lang == "ru" else "You have no saved events for this day. Swipe some cards!",
@@ -271,6 +277,7 @@ async def generate_plan(
             "plan_name": "Нет событий" if body.lang == "ru" else "No events",
             "date": body.date,
             "total_events": 0,
+            "saved_events_count": len(events_rows),
             "timeline": [],
             "skipped": [],
             "ai_note": "Событий нет." if body.lang == "ru" else "No events.",
@@ -461,6 +468,7 @@ async def generate_plan(
         "plan_name": plan.get("plan_name", "Your Day Plan"),
         "date": body.date,
         "total_events": len(plan.get("timeline", [])),
+        "saved_events_count": len(events_rows),
         "total_travel_km": round(total_travel, 1),
         "timeline": plan.get("timeline", []),
         "skipped": plan.get("skipped", []),
