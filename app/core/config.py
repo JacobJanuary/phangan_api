@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # ── Phantom ──────────────────────────────────────────────────────
 
     # ── Media ────────────────────────────────────────────────────────
-    MEDIA_DIR: str = "/home/elcrypto/TG_parcer/media"
+    MEDIA_DIR: str = "/home/ubuntu/Phangan/TG_parcer/media"
 
     model_config = {
         "env_file": ".env",
