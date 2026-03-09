@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import asyncpg
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
+from app.core.config import get_settings
 from app.core.dependencies import get_current_user_id
 from app.db.database import get_pool
 from app.schemas.events import EventUpdate
