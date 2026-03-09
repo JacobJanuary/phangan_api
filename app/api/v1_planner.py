@@ -264,6 +264,17 @@ async def generate_plan(
             "price_thb": row["price_thb"] or 0,
         })
 
+    if not events_data:
+        # All events were filtered out, likely because they are in the past.
+        return {
+            "plan_name": "Нет событий" if body.lang == "ru" else "No events",
+            "date": body.date,
+            "total_events": 0,
+            "timeline": [],
+            "skipped": [],
+            "ai_note": "Событий нет." if body.lang == "ru" else "No events.",
+        }
+
     # ── 5. Build venue-to-venue distance matrix ──────────────────────────
     distance_matrix: dict[str, dict] = {}
     coords_events = [e for e in events_data if e["coords"]]
