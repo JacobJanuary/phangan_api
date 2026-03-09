@@ -63,6 +63,7 @@ class PlannerRequest(BaseModel):
     lng: float = Field(..., description="User longitude")
     lang: Literal["en", "ru"] = Field(default="ru")
     current_time: str | None = Field(default=None, description="Current time HH:MM")
+    force_refresh: bool = Field(default=False, description="Bypass cache and force regeneration")
 
 
 # ── Haversine ────────────────────────────────────────────────────────────────
@@ -306,7 +307,6 @@ async def generate_plan(
             },
         },
         "target_date": body.date,
-        "current_time": body.current_time,
         "language": body.lang,
         "events": events_data,
         "distance_matrix": distance_matrix,
@@ -324,7 +324,7 @@ async def generate_plan(
         """, user_id, target_date)
 
     plan = None
-    if cached_row and cached_row["input_hash"] == input_hash:
+    if not body.force_refresh and cached_row and cached_row["input_hash"] == input_hash:
         logger.info("Vibe Pilot: Cache HIT for user %s, date %s", user_id, target_date)
         plan = json.loads(cached_row["plan_json"])
 
