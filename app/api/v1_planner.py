@@ -62,6 +62,7 @@ class PlannerRequest(BaseModel):
     lat: float = Field(..., description="User latitude")
     lng: float = Field(..., description="User longitude")
     lang: Literal["en", "ru"] = Field(default="ru")
+    current_time: str | None = Field(default=None, description="Current time HH:MM")
 
 
 # ── Haversine ────────────────────────────────────────────────────────────────
@@ -223,18 +224,40 @@ async def generate_plan(
         return str(title_jsonb)
 
     events_data = []
+    
+    current_minutes = 0
+    if body.current_time:
+        try:
+            ch, cm = map(int, body.current_time[:5].split(":"))
+            current_minutes = ch * 60 + cm
+        except Exception:
+            pass
+
     for row in events_rows:
         vlat = row["venue_lat"]
         vlng = row["venue_lng"]
         cat = (row["category"] or "Other").lower()
         dist = _road_km(body.lat, body.lng, vlat, vlng) if vlat and vlng else None
+        
+        time_str = (row["event_time"] or "")[:5] if row["event_time"] else "TBD"
+        dur = DEFAULT_DURATION.get(cat, 60)
+        
+        # ── 4.1 Filter out past events early to save tokens & logic ──
+        if body.current_time and time_str != "TBD" and current_minutes > 0:
+            try:
+                eh, em = map(int, time_str.split(":"))
+                end_minutes = eh * 60 + em + dur
+                if end_minutes <= current_minutes:
+                    continue  # Event has already ended, skip it
+            except Exception:
+                pass
 
         events_data.append({
             "id": str(row["id"]),
             "title": _extract_title(row["title"], body.lang),
             "category": row["category"] or "Other",
-            "time": (row["event_time"] or "")[:5] if row["event_time"] else "TBD",
-            "duration_min": DEFAULT_DURATION.get(cat, 60),
+            "time": time_str,
+            "duration_min": dur,
             "location": row["location_name"] or "",
             "coords": {"lat": vlat, "lng": vlng} if vlat and vlng else None,
             "distance_from_user_km": dist,
@@ -272,6 +295,7 @@ async def generate_plan(
             },
         },
         "target_date": body.date,
+        "current_time": body.current_time,
         "language": body.lang,
         "events": events_data,
         "distance_matrix": distance_matrix,
@@ -297,9 +321,18 @@ async def generate_plan(
         settings = get_settings()
         client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
+        time_instruction = ""
+        if body.current_time:
+            time_instruction = (
+                f"\nCRITICAL: The current time is {body.current_time}. "
+                f"You MUST NOT schedule any events that have already started AND finished. "
+                f"Begin the plan from the currently available (ongoing or upcoming) events.\n"
+            )
+
         user_prompt = (
             f"Plan the optimal day for {body.date}. "
-            f"Language: {'Russian' if body.lang == 'ru' else 'English'}.\n\n"
+            f"Language: {'Russian' if body.lang == 'ru' else 'English'}.\n"
+            f"{time_instruction}\n"
             f"Input data:\n{json.dumps(gemini_input, ensure_ascii=False, indent=2)}"
         )
 
