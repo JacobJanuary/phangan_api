@@ -351,6 +351,19 @@ async def get_event(
         
         event_dict = _build_event(row, lang, today, tomorrow, now_bkk)
         
+        # Include raw JSONB dicts so the edit form can populate both language inputs
+        import json as _json
+        for jsonb_field in ("title", "summary", "description"):
+            raw = row[jsonb_field]
+            if isinstance(raw, str):
+                try:
+                    raw = _json.loads(raw)
+                except (_json.JSONDecodeError, TypeError):
+                    raw = {"en": raw, "ru": raw}
+            if not isinstance(raw, dict):
+                raw = {"en": str(raw) if raw else "", "ru": str(raw) if raw else ""}
+            event_dict[f"{jsonb_field}_raw"] = raw
+
         from app.services.facepile_service import get_facepile_batch
         viewer_gender = await conn.fetchval("SELECT gender FROM users WHERE id = $1", _user_id)
         try:
@@ -397,7 +410,9 @@ async def update_event(
             if value is not None:
                 if field in ("title", "summary", "description"):
                     import json
-                    update_fields.append(f"{field} = ${idx}::jsonb")
+                    # MERGE with existing JSONB using || to preserve other-language keys
+                    # e.g. sending {"ru": "Новое"} won't erase the existing "en" key
+                    update_fields.append(f"{field} = COALESCE({field}, '{{}}') || ${idx}::jsonb")
                     params.append(json.dumps(value, ensure_ascii=False))
                 elif field == "event_date":
                     update_fields.append(f"{field} = ${idx}::date")
