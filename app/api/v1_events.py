@@ -390,12 +390,17 @@ async def update_event(
     Only the original author (matching sender_id) can perform this action.
     """
     async with pool.acquire() as conn:
-        # 1. Verify existence and ownership
+        # 1. Resolve caller's telegram_id (JWT sub = internal users.id, but sender_id = telegram_id)
+        caller_tg_id = await conn.fetchval(
+            "SELECT telegram_id FROM users WHERE id = $1", current_user_id
+        )
+
+        # 2. Verify existence and ownership
         row = await conn.fetchrow("SELECT sender_id FROM events WHERE id = $1", event_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
         
-        if row["sender_id"] != current_user_id:
+        if row["sender_id"] != caller_tg_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to edit this event"
@@ -446,11 +451,15 @@ async def delete_event(
     Deletes an event from the database. Only the original author can perform this action.
     """
     async with pool.acquire() as conn:
+        caller_tg_id = await conn.fetchval(
+            "SELECT telegram_id FROM users WHERE id = $1", current_user_id
+        )
+
         row = await conn.fetchrow("SELECT sender_id FROM events WHERE id = $1", event_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
         
-        if row["sender_id"] != current_user_id:
+        if row["sender_id"] != caller_tg_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to delete this event"
@@ -503,14 +512,18 @@ async def upload_event_image(
         )
 
     async with pool.acquire() as conn:
-        # ── 3. Verify existence & ownership ──────────────────────────────
+        # ── 3. Resolve telegram_id & verify existence + ownership ────────
+        caller_tg_id = await conn.fetchval(
+            "SELECT telegram_id FROM users WHERE id = $1", current_user_id
+        )
+
         row = await conn.fetchrow(
             "SELECT sender_id, category, image_path FROM events WHERE id = $1",
             event_id,
         )
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-        if row["sender_id"] != current_user_id:
+        if row["sender_id"] != caller_tg_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to edit this event",
