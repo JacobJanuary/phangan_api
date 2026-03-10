@@ -37,13 +37,16 @@ async def update_me(
             detail="No valid fields provided for update",
         )
     
-    # Security note: Both fields originate from our strict Pydantic Literal type parsing.
-    # Therefore, dynamic query construction here is safe against SQLi, but we should map values as parameters.
+    # Map Pydantic field names → actual DB column names
+    FIELD_TO_COLUMN = {
+        "current_mood": "mood",
+    }
     
     set_clauses = []
     args = []
     for idx, (key, val) in enumerate(update_data.items(), start=1):
-        set_clauses.append(f"{key} = ${idx}")
+        col = FIELD_TO_COLUMN.get(key, key)
+        set_clauses.append(f"{col} = ${idx}")
         args.append(val)
         
     args.append(user_id)
