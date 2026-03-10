@@ -22,6 +22,7 @@ from app.api.users import router as users_router
 from app.api.v1_events import router as v1_events_router
 from app.api.v1_planner import router as v1_planner_router
 from app.api.v1_swipes import router as v1_swipes_router
+from app.api.v1_translations import router as v1_translations_router
 from app.core.config import get_settings
 from app.core.middlewares import SecurityMiddleware
 from app.db.database import close_pool, create_pool
@@ -81,6 +82,7 @@ app.include_router(users_router)
 app.include_router(v1_events_router)
 app.include_router(v1_swipes_router)
 app.include_router(v1_planner_router)
+app.include_router(v1_translations_router)
 
 
 # ── Health check (no API key required) ────────────────────────────────────
