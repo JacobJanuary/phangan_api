@@ -23,6 +23,7 @@ from app.api.v1_events import router as v1_events_router
 from app.api.v1_planner import router as v1_planner_router
 from app.api.v1_swipes import router as v1_swipes_router
 from app.api.v1_translations import router as v1_translations_router
+from app.api.bot_webhook import router as bot_webhook_router, register_webhook
 from app.core.config import get_settings
 from app.core.middlewares import SecurityMiddleware
 from app.db.database import close_pool, create_pool
@@ -47,6 +48,11 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info("🚀 Starting Phangan API...")
     await create_pool(settings)
+    # Register Telegram webhook for bot commands (/start etc.)
+    try:
+        await register_webhook("https://api.fastpump.fun")
+    except Exception as exc:
+        logger.warning("⚠️ Webhook registration failed (non-fatal): %s", exc)
     yield
     await close_pool()
     logger.info("👋 Phangan API shut down.")
@@ -83,6 +89,7 @@ app.include_router(v1_events_router)
 app.include_router(v1_swipes_router)
 app.include_router(v1_planner_router)
 app.include_router(v1_translations_router)
+app.include_router(bot_webhook_router)
 
 
 # ── Health check (no API key required) ────────────────────────────────────

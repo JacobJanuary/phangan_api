@@ -440,10 +440,10 @@ async def generate_plan(
         """, user_id, target_date, input_hash, json.dumps(plan, ensure_ascii=False))
 
     # ── 8. Enrich timeline with full event data ──────────────────────────
-    events_by_id = {e["id"]: e for e in events_data}
+    events_by_id = {str(e["id"]): e for e in events_data}
 
     for item in plan.get("timeline", []):
-        ev = events_by_id.get(item.get("event_id"))
+        ev = events_by_id.get(str(item.get("event_id", "")))
         if ev:
             item["title"] = ev["title"]
             item["location"] = ev["location"]
@@ -453,10 +453,15 @@ async def generate_plan(
             item["price_thb"] = ev["price_thb"]
 
     for item in plan.get("skipped", []):
-        ev = events_by_id.get(item.get("event_id"))
+        ev = events_by_id.get(str(item.get("event_id", "")))
         if ev:
             item["title"] = ev["title"]
             item["time"] = ev["time"]
+            item["location"] = ev.get("location", "")
+            item["lat"] = ev["coords"]["lat"] if ev.get("coords") else None
+            item["lng"] = ev["coords"]["lng"] if ev.get("coords") else None
+            item["category"] = ev.get("category", "")
+            item["price_thb"] = ev.get("price_thb", 0)
 
     # ── 9. Build final response ──────────────────────────────────────────
     total_travel = sum(
