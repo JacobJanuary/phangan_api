@@ -32,7 +32,7 @@ async def detect_gender(first_name: str) -> str:
         prompt = f"Determine the most likely gender for the first name '{first_name}'. Reply strictly with either 'male' or 'female'."
         
         response = await client.aio.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.1-flash-lite-preview",
             contents=prompt,
         )
         
