@@ -463,7 +463,25 @@ async def generate_plan(
             item["category"] = ev.get("category", "")
             item["price_thb"] = ev.get("price_thb", 0)
 
-    # ── 9. Build final response ──────────────────────────────────────────
+    # ── 9. Build all_candidates — full pool for swap alternatives ───────
+    timeline_ids = {str(item.get("event_id", "")) for item in plan.get("timeline", [])}
+    all_candidates = []
+    for ev in events_data:
+        if ev["id"] in timeline_ids:
+            continue
+        all_candidates.append({
+            "event_id": ev["id"],
+            "title": ev["title"],
+            "time": ev["time"],
+            "location": ev["location"],
+            "lat": ev["coords"]["lat"] if ev["coords"] else None,
+            "lng": ev["coords"]["lng"] if ev["coords"] else None,
+            "category": ev["category"],
+            "price_thb": ev["price_thb"],
+            "duration_min": ev["duration_min"],
+        })
+
+    # ── 10. Build final response ─────────────────────────────────────────
     total_travel = sum(
         item.get("travel_from_previous_km", 0)
         for item in plan.get("timeline", [])
@@ -477,5 +495,6 @@ async def generate_plan(
         "total_travel_km": round(total_travel, 1),
         "timeline": plan.get("timeline", []),
         "skipped": plan.get("skipped", []),
+        "all_candidates": all_candidates,
         "ai_note": plan.get("ai_note", ""),
     }
