@@ -170,6 +170,35 @@ async def my_vibe(
                     past.append(ev)
                 result["past"] = past
 
+        # ── Enrich all events with facepile avatars ("Кто пойдёт?") ──────
+        all_events = upcoming + result.get("past", [])
+        if all_events:
+            try:
+                from app.services.facepile_service import get_facepile_batch
+
+                viewer_gender = None
+                try:
+                    async with pool.acquire() as conn:
+                        viewer_gender = await conn.fetchval(
+                            "SELECT gender FROM users WHERE id = $1", user_id
+                        )
+                except Exception:
+                    pass
+
+                event_ids = [int(ev["id"]) for ev in all_events]
+                event_categories = {int(ev["id"]): ev.get("category", "") for ev in all_events}
+
+                facepile_data = await get_facepile_batch(
+                    event_ids, event_categories, viewer_gender, pool
+                )
+                for ev in all_events:
+                    fp = facepile_data.get(int(ev["id"]))
+                    if fp:
+                        ev["attendeeCount"] = fp["count"]
+                        ev["facepileUrls"] = fp["avatarUrls"]
+            except Exception as exc:
+                logger.warning("Facepile enrichment failed for my-vibe: %s", exc)
+
     except Exception as exc:
         logger.error("Error fetching my-vibe for user %d: %s", user_id, exc)
         raise HTTPException(
