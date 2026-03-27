@@ -245,7 +245,7 @@ async def list_events(
             v.name            AS venue_name,
             v.lat             AS venue_lat,
             v.lng             AS venue_lng,
-            v.google_maps_url AS venue_google_maps_url
+            COALESCE(e.google_maps_url, v.google_maps_url) AS venue_google_maps_url
         FROM events e
         LEFT JOIN venues v ON e.venue_id = v.id
         {where}
@@ -340,7 +340,7 @@ async def get_event(
             v.name            AS venue_name,
             v.lat             AS venue_lat,
             v.lng             AS venue_lng,
-            v.google_maps_url AS venue_google_maps_url
+            COALESCE(e.google_maps_url, v.google_maps_url) AS venue_google_maps_url
         FROM events e
         LEFT JOIN venues v ON e.venue_id = v.id
         WHERE e.id = $1
@@ -467,10 +467,11 @@ async def delete_event(
                 detail="Not authorized to delete this event"
             )
 
-        await conn.execute("DELETE FROM events WHERE id = $1", event_id)
-        
-        # Also clean up related swipes to prevent orphaned constraints
+        # Clean up FK references BEFORE deleting parent event row
         await conn.execute("DELETE FROM user_swipes WHERE event_id = $1", event_id)
+        await conn.execute("DELETE FROM outreach_log WHERE event_id = $1", event_id)
+
+        await conn.execute("DELETE FROM events WHERE id = $1", event_id)
 
         return {"status": "ok", "message": "Event deleted successfully"}
 
