@@ -11,3 +11,4 @@ class EventUpdate(BaseModel):
     location_name: Optional[str] = None
     google_maps_url: Optional[str] = None
     price_thb: Optional[int] = None
+    recurrence_type: Optional[str] = None
