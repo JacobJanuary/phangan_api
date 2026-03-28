@@ -137,6 +137,7 @@ def _build_event(row: asyncpg.Record, lang: str, today: date, tomorrow: date, no
         "google_maps_url": row.get("venue_google_maps_url"),
         "dateInfo": date_info,
         "dateCategory": date_cat,
+        "event_time": ev_time[:5] if ev_time else "",
         "timeInfo": ev_time[:5] if ev_time else "TBD",
         "isLive": _is_live(ev_date, ev_time, today, now_bkk),
         "type": etype,
@@ -416,7 +417,7 @@ async def update_event(
         idx = 1
 
         for field, value in payload.model_dump(exclude_unset=True).items():
-            if value is not None:
+            if value is not None or field == "recurrence_type":
                 if field in ("title", "summary", "description"):
                     import json
                     # MERGE with existing JSONB using || to preserve other-language keys

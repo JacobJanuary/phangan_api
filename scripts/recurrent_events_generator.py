@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 import asyncpg
 import os
 
+from app.core.config import get_settings
+
 # Configure basic logging
 logging.basicConfig(
     level=logging.INFO,
@@ -14,12 +16,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("recurrent_events_generator")
 
-# Use local postgres connection matching the project defaults
-PG_DSN = os.getenv("PG_DSN", "postgres://thai_app_user:ILoveThai@%37@localhost:5432/ThaiApp")
 BKK_ZONE = ZoneInfo("Asia/Bangkok")
 
 async def generate_recurring_events():
     logger.info("🚀 Starting Recurrent Events Generator...")
+    settings = get_settings()
     
     # Calculate "tomorrow" in Bangkok time
     now_bkk = datetime.now(BKK_ZONE)
@@ -29,7 +30,13 @@ async def generate_recurring_events():
     
     logger.info(f"📅 Target Date (Tomorrow): {tomorrow_bkk} (Weekday: {tomorrow_weekday})")
 
-    conn = await asyncpg.connect(PG_DSN)
+    settings = get_settings()
+    
+    # ── Assemble PostgreSQL DSN manually from config ──────────────
+    import urllib.parse
+    pwd_escaped = urllib.parse.quote_plus(settings.DB_PASSWORD)
+    pg_dsn = f"postgres://{settings.DB_USER}:{pwd_escaped}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+    conn = await asyncpg.connect(pg_dsn)
     
     try:
         # Step 1: Find all master recurrent events
