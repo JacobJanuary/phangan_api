@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 import asyncpg
-import mediapipe as mp
+import cv2
 from PIL import Image
 from anthropic import AsyncAnthropic
 
@@ -97,25 +97,24 @@ async def process_avatar_background(
             if resp.status_code == 200:
                 image_bytes = resp.content
 
-                # MediaPipe Face Detection (BlazeFace)
+                # OpenCV Face Detection Pipeline
+                from io import BytesIO
                 image = Image.open(BytesIO(image_bytes))
                 if image.mode in ("RGBA", "P"):
                     image = image.convert("RGB")
 
                 import numpy as np
+                import cv2
                 img_rgb = np.array(image)
+                img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
 
-                with mp.solutions.face_detection.FaceDetection(
-                    model_selection=0, min_detection_confidence=0.7
-                ) as detector:
-                    result = detector.process(img_rgb)
-                    if result.detections:
-                        confidence = result.detections[0].score[0]
-                        is_aesthetic = confidence > 0.85
-                        logger.info(
-                            "Face detected for %s: confidence=%.2f, aesthetic=%s",
-                            telegram_id, confidence, is_aesthetic,
-                        )
+                # Use OpenCV's built-in Haar Cascade instead of broken MediaPipe 0.10.x solutions on Ubuntu
+                face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+                faces = face_cascade.detectMultiScale(img_gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+
+                if len(faces) > 0:
+                    is_aesthetic = True
+                    logger.info("Face detected for %s via OpenCV: aesthetic=%s", telegram_id, is_aesthetic)
 
                 # Resize + save as WebP
                 if image.width > 600:
