@@ -13,7 +13,7 @@ import httpx
 import asyncpg
 import mediapipe as mp
 from PIL import Image
-from google import genai
+from anthropic import AsyncAnthropic
 
 from app.core.config import get_settings
 
@@ -23,20 +23,25 @@ logger = logging.getLogger(__name__)
 async def detect_gender(first_name: str) -> str:
     """Uses Google GenAI to detect gender based on first name."""
     settings = get_settings()
-    if not settings.GEMINI_API_KEY:
-        logger.warning("GEMINI_API_KEY not set. Defaulting gender to male.")
+    if not settings.KIMI_CODE_API_KEY:
+        logger.warning("KIMI_CODE_API_KEY not set. Defaulting gender to male.")
         return "male"
 
     try:
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        client = AsyncAnthropic(
+            api_key=settings.KIMI_CODE_API_KEY,
+            base_url="https://api.kimi.com/coding/v1",
+            default_headers={"User-Agent": "ClaudeCode/1.0"}
+        )
         prompt = f"Determine the most likely gender for the first name '{first_name}'. Reply strictly with either 'male' or 'female'."
         
-        response = await client.aio.models.generate_content(
-            model="gemini-3.1-flash-lite-preview",
-            contents=prompt,
+        response = await client.messages.create(
+            model="kimi-for-coding",
+            max_tokens=10,
+            messages=[{"role": "user", "content": prompt}]
         )
         
-        ans = response.text.strip().lower()
+        ans = response.content[0].text.strip().lower()
         if "female" in ans:
             return "female"
         return "male"

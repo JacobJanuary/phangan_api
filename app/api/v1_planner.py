@@ -22,8 +22,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from google import genai
-from google.genai import types
+from anthropic import AsyncAnthropic
 
 from app.core.config import get_settings
 from app.core.dependencies import get_current_user_id
@@ -37,10 +36,8 @@ BKK = ZoneInfo("Asia/Bangkok")
 
 # ── Constants ────────────────────────────────────────────────────────────────
 # Model cascade: (model_name, max_attempts)
-GEMINI_CASCADE = [
-    ("gemini-3.1-flash-lite-preview", 2),
-    ("gemini-3-flash-preview", 1),
-    ("gemini-2.5-flash", 1),
+MODEL_CASCADE = [
+    ("kimi-for-coding", 2),
 ]
 ROAD_FACTOR = 1.4       # Haversine → approximate road distance
 SCOOTER_KMH = 25        # Average scooter speed on Koh Phangan
@@ -116,7 +113,7 @@ RULES:
 
 7. Respond in the specified language.
 
-OUTPUT: Return ONLY valid JSON (no markdown, no ```), strictly in this format:
+OUTPUT: Return ONLY valid raw JSON (strictly no markdown formatting, no ```json wrappers), matching this format:
 {
   "plan_name": "Creative short name for this day plan (in user's language)",
   "timeline": [
@@ -336,9 +333,13 @@ async def generate_plan(
         plan = json.loads(cached_row["plan_json"])
 
     if not plan:
-        # ── 7. Call Gemini with retry + model cascade ────────────────────────
+        # ── 7. Call AI planner with retry + cascade ────────────────────────
         settings = get_settings()
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        client = AsyncAnthropic(
+            api_key=settings.KIMI_CODE_API_KEY,
+            base_url="https://api.kimi.com/coding/v1",
+            default_headers={"User-Agent": "ClaudeCode/1.0"}
+        )
 
         time_instruction = ""
         if body.current_time:
@@ -357,43 +358,22 @@ async def generate_plan(
 
         last_error = None
 
-        for model_name, max_attempts in GEMINI_CASCADE:
-            # Build config per model — only 2.5+ supports thinking
-            if "2.5" in model_name or "3" in model_name:
-                gen_config = types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    temperature=0.7,
-                    max_output_tokens=16384,
-                    response_mime_type="application/json",
-                    thinking_config=types.ThinkingConfig(
-                        thinking_budget=4096,
-                    ),
-                )
-            else:
-                gen_config = types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    temperature=0.7,
-                    max_output_tokens=16384,
-                    response_mime_type="application/json",
-                )
-
+        for model_name, max_attempts in MODEL_CASCADE:
             for attempt in range(1, max_attempts + 1):
                 try:
                     logger.info(
                         "Vibe Pilot: calling %s (attempt %d/%d)",
                         model_name, attempt, max_attempts,
                     )
-                    # 🚀 CRITICAL: Execute the slow SYNCHRONOUS Gemini call in a separate thread
-                    # to prevent blocking the FastAPI Event Loop (allowing other users / tabs to load)
-                    def _call_ai():
-                        return client.models.generate_content(
-                            model=model_name,
-                            contents=user_prompt,
-                            config=gen_config,
-                        )
-                    response = await asyncio.to_thread(_call_ai)
+                    
+                    response = await client.messages.create(
+                        model=model_name,
+                        max_tokens=8192,
+                        system=SYSTEM_PROMPT,
+                        messages=[{"role": "user", "content": user_prompt}]
+                    )
 
-                    raw_text = response.text.strip()
+                    raw_text = response.content[0].text.strip()
                     if raw_text.startswith("```"):
                         raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
                     if raw_text.endswith("```"):
@@ -418,7 +398,8 @@ async def generate_plan(
                         model_name, attempt, str(exc)[:200],
                     )
                     if attempt < max_attempts:
-                        continue  # Retry immediately, no delay
+                        await asyncio.sleep(1)
+                        continue
                     break  # Exhausted retries → next model
 
             if plan is not None:

@@ -28,8 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import asyncpg
 from PIL import Image
-from google import genai
-from google.genai import types
+from anthropic import AsyncAnthropic
 
 from app.core.config import get_settings
 
@@ -213,7 +212,7 @@ def _process_and_save(image_bytes: bytes, user_id: int, output_dir: Path) -> tup
 
 
 async def generate_one(
-    client: genai.Client,
+    client: AsyncAnthropic,
     user_id: int,
     name: str,
     gender: str,
@@ -223,16 +222,17 @@ async def generate_one(
 ) -> tuple[bool, str]:
     """Generate avatar for a single phantom user. Returns (success, message)."""
 
-    # Phase 1: Generate unique prompt via Gemini 3 Flash (retry on 503)
+    # Phase 1: Generate unique prompt via Kimi Code API
     image_prompt = None
     meta_prompt = _build_meta_prompt(name, gender, mood)
     for p1_attempt in range(5):
         try:
-            response = await client.aio.models.generate_content(
-                model="gemini-3-flash-preview",
-                contents=meta_prompt,
+            response = await client.messages.create(
+                model="kimi-for-coding",
+                max_tokens=2048,
+                messages=[{"role": "user", "content": meta_prompt}]
             )
-            image_prompt = _build_image_prompt(response.text.strip())
+            image_prompt = _build_image_prompt(response.content[0].text.strip())
             logger.info("  Phase 1 OK: prompt (%d chars)", len(image_prompt))
             break
         except Exception as e:
@@ -250,44 +250,9 @@ async def generate_one(
         logger.info("  [DRY RUN] Prompt: %s", image_prompt[:120])
         return True, "dry_run"
 
-    # Phase 2: Generate image via Gemini 3.1 Flash Image
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        prompt = image_prompt if attempt == 0 else _build_fallback_prompt(name, gender, mood, attempt)
-
-        try:
-            result = await client.aio.models.generate_content(
-                model=IMAGE_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_modalities=["Image"],
-                    image_config=types.ImageConfig(
-                        aspect_ratio="1:1",
-                    ),
-                ),
-            )
-            for part in result.parts:
-                if part.inline_data is not None:
-                    rel_path, w, h = _process_and_save(
-                        part.inline_data.data, user_id, output_dir
-                    )
-                    logger.info("  Phase 2 OK: %s (%dx%d)", rel_path.split("/")[1], w, h)
-                    return True, rel_path
-
-            logger.warning("  Phase 2: no image (attempt %d/%d)", attempt + 1, max_attempts)
-
-        except Exception as e:
-            err = str(e)
-            if "SAFETY" in err.upper() or "blocked" in err.lower():
-                logger.warning("  Phase 2: safety filter (attempt %d/%d)", attempt + 1, max_attempts)
-            elif "503" in err or "UNAVAILABLE" in err.upper():
-                logger.info("  Phase 2: 503 retry %d/%d...", attempt + 1, max_attempts)
-            else:
-                logger.error("  Phase 2: error (attempt %d/%d): %s", attempt + 1, max_attempts, err[:100])
-
-        await asyncio.sleep(2)
-
-    return False, "all_attempts_failed"
+    # Phase 2: Disabled since we migrated off Gemini and Kimi has no image generation yet.
+    logger.error("  Phase 2 SKIP: Image generation disabled. Need an image provider (e.g., DALL-E). Generated Prompt: %s", image_prompt)
+    return False, "image_generation_disabled"
 
 
 CONCURRENCY = 10  # Number of parallel workers
@@ -302,8 +267,8 @@ async def main():
     args = parser.parse_args()
 
     settings = get_settings()
-    if not settings.GEMINI_API_KEY:
-        logger.error("GEMINI_API_KEY not set!")
+    if not settings.KIMI_CODE_API_KEY:
+        logger.error("KIMI_CODE_API_KEY not set!")
         sys.exit(1)
 
     # Setup output directory
@@ -350,8 +315,12 @@ async def main():
         await pool.close()
         return
 
-    # Init Gemini client
-    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    # Init Kimi client
+    client = AsyncAnthropic(
+        api_key=settings.KIMI_CODE_API_KEY,
+        base_url="https://api.kimi.com/coding/v1",
+        default_headers={"User-Agent": "ClaudeCode/1.0"}
+    )
 
     # Concurrency control
     semaphore = asyncio.Semaphore(args.workers)

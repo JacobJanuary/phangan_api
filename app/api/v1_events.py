@@ -416,6 +416,7 @@ async def update_event(
         params = []
         idx = 1
 
+        print(f"DEBUG INCOMING UPDATE payload={payload.model_dump(exclude_unset=True)}")
         for field, value in payload.model_dump(exclude_unset=True).items():
             if value is not None or field == "recurrence_type":
                 if field in ("title", "summary", "description"):
