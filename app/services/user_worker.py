@@ -30,7 +30,7 @@ async def detect_gender(first_name: str) -> str:
     try:
         client = AsyncAnthropic(
             api_key=settings.KIMI_CODE_API_KEY,
-            base_url="https://api.kimi.com/coding/v1",
+            base_url="https://api.kimi.com/coding/",
             default_headers={"User-Agent": "ClaudeCode/1.0"}
         )
         prompt = f"Determine the most likely gender for the first name '{first_name}'. Reply strictly with either 'male' or 'female'."

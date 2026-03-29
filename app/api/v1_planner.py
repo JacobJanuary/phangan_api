@@ -337,7 +337,7 @@ async def generate_plan(
         settings = get_settings()
         client = AsyncAnthropic(
             api_key=settings.KIMI_CODE_API_KEY,
-            base_url="https://api.kimi.com/coding/v1",
+            base_url="https://api.kimi.com/coding/",
             default_headers={"User-Agent": "ClaudeCode/1.0"}
         )
 
