@@ -187,14 +187,14 @@ async def list_events(
         (
             e.event_date > (NOW() AT TIME ZONE 'Asia/Bangkok')::date
             OR NULLIF(e.event_time, '') IS NULL
-            OR (
-                e.category ILIKE 'party' AND 
-                (e.event_date + LEFT(e.event_time, 5)::time) + interval '3 hours' >= NOW() AT TIME ZONE 'Asia/Bangkok'
-            )
-            OR (
-                e.category NOT ILIKE 'party' AND 
-                (e.event_date + LEFT(e.event_time, 5)::time) >= NOW() AT TIME ZONE 'Asia/Bangkok'
-            )
+            OR CASE
+                WHEN e.event_time ~ '^[0-2][0-9]:[0-5][0-9]' THEN
+                    CASE WHEN e.category ILIKE 'party'
+                         THEN (e.event_date + LEFT(e.event_time, 5)::time) + interval '3 hours' >= NOW() AT TIME ZONE 'Asia/Bangkok'
+                         ELSE (e.event_date + LEFT(e.event_time, 5)::time) >= NOW() AT TIME ZONE 'Asia/Bangkok'
+                    END
+                ELSE TRUE
+            END
         )
         """,
         # Hide events the user already swiped (left or right)
