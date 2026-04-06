@@ -4,6 +4,7 @@ asyncpg>=0.30.0
 pydantic-settings>=2.0.0
 python-dotenv>=1.0.0
 anthropic>=0.25.0
+openai>=1.14.0
 httpx>=0.27.0
 Pillow>=10.0.0
 mediapipe>=0.10.0

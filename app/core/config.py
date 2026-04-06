@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     # ── Telegram & AI ────────────────────────────────────────────────
     BOT_TOKEN: str
     KIMI_CODE_API_KEY: str
+    DEEPSEEK_API_KEY: str | None = None
+    ANTHROPIC_API_KEY: str | None = None
     MAPBOX_TOKEN: str = ""
 
     # ── CORS ─────────────────────────────────────────────────────────

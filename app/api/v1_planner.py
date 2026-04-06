@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from anthropic import AsyncAnthropic
+from openai import AsyncOpenAI
 
 from app.core.config import get_settings
 from app.core.dependencies import get_current_user_id
@@ -35,9 +36,10 @@ router = APIRouter(prefix="/api/v1/planner", tags=["planner"])
 BKK = ZoneInfo("Asia/Bangkok")
 
 # ── Constants ────────────────────────────────────────────────────────────────
-# Model cascade: (model_name, max_attempts)
+# Model cascade: (model_name, provider, max_attempts)
 MODEL_CASCADE = [
-    ("kimi-for-coding", 2),
+    ("claude-haiku-4-5-20251001", "anthropic_true", 2),
+    ("deepseek-chat", "openai", 1),
 ]
 ROAD_FACTOR = 1.4       # Haversine → approximate road distance
 SCOOTER_KMH = 25        # Average scooter speed on Koh Phangan
@@ -335,11 +337,28 @@ async def generate_plan(
     if not plan:
         # ── 7. Call AI planner with retry + cascade ────────────────────────
         settings = get_settings()
-        client = AsyncAnthropic(
-            api_key=settings.KIMI_CODE_API_KEY,
-            base_url="https://api.kimi.com/coding/",
-            default_headers={"User-Agent": "ClaudeCode/1.0"}
-        )
+        
+        # Initialize clients
+        client_anthropic = None
+        if settings.KIMI_CODE_API_KEY:
+            client_anthropic = AsyncAnthropic(
+                api_key=settings.KIMI_CODE_API_KEY,
+                base_url="https://api.kimi.com/coding/",
+                default_headers={"User-Agent": "ClaudeCode/1.0"}
+            )
+            
+        client_anthropic_true = None
+        if settings.ANTHROPIC_API_KEY:
+            client_anthropic_true = AsyncAnthropic(
+                api_key=settings.ANTHROPIC_API_KEY
+            )
+            
+        client_openai = None
+        if settings.DEEPSEEK_API_KEY:
+            client_openai = AsyncOpenAI(
+                api_key=settings.DEEPSEEK_API_KEY,
+                base_url="https://api.deepseek.com"
+            )
 
         time_instruction = ""
         if body.current_time:
@@ -358,22 +377,55 @@ async def generate_plan(
 
         last_error = None
 
-        for model_name, max_attempts in MODEL_CASCADE:
+        for model_name, provider, max_attempts in MODEL_CASCADE:
             for attempt in range(1, max_attempts + 1):
                 try:
                     logger.info(
-                        "Vibe Pilot: calling %s (attempt %d/%d)",
-                        model_name, attempt, max_attempts,
+                        "Vibe Pilot: calling %s via %s (attempt %d/%d)",
+                        model_name, provider, attempt, max_attempts,
                     )
                     
-                    response = await client.messages.create(
-                        model=model_name,
-                        max_tokens=8192,
-                        system=SYSTEM_PROMPT,
-                        messages=[{"role": "user", "content": user_prompt}]
-                    )
+                    raw_text = ""
+                    
+                    if provider == "openai":
+                        if not client_openai:
+                            raise ValueError("DeepSeek API Key is missing.")
+                        response = await client_openai.chat.completions.create(
+                            model=model_name,
+                            messages=[
+                                {"role": "system", "content": SYSTEM_PROMPT},
+                                {"role": "user", "content": user_prompt}
+                            ]
+                        )
+                        raw_text = response.choices[0].message.content.strip() if response.choices[0].message.content else ""
+                    
+                    elif provider == "anthropic":
+                        if not client_anthropic:
+                            raise ValueError("Kimi Code API Key is missing.")
+                        response = await client_anthropic.messages.create(
+                            model=model_name,
+                            max_tokens=8192,
+                            system=SYSTEM_PROMPT,
+                            messages=[{"role": "user", "content": user_prompt}]
+                        )
+                        raw_text = response.content[0].text.strip()
+                        
+                    elif provider == "anthropic_true":
+                        if not client_anthropic_true:
+                            raise ValueError("Anthropic API Key is missing.")
+                        response = await client_anthropic_true.messages.create(
+                            model=model_name,
+                            max_tokens=8192,
+                            system=SYSTEM_PROMPT,
+                            messages=[{"role": "user", "content": user_prompt}]
+                        )
+                        raw_text = response.content[0].text.strip()
 
-                    raw_text = response.content[0].text.strip()
+                    if not raw_text:
+                        logger.warning("Vibe Pilot: %s attempt %d returned empty text! Response dump: %s", model_name, attempt, response)
+                        raise json.JSONDecodeError("Empty text", "", 0)
+
+                    # Strip markdown blocks
                     if raw_text.startswith("```"):
                         raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
                     if raw_text.endswith("```"):
@@ -386,10 +438,13 @@ async def generate_plan(
                 except json.JSONDecodeError as exc:
                     last_error = exc
                     logger.warning(
-                        "Vibe Pilot: %s attempt %d — invalid JSON: %s",
-                        model_name, attempt, str(exc)[:200],
+                        "Vibe Pilot: %s attempt %d — invalid JSON: %s. Raw: %s",
+                        model_name, attempt, str(exc)[:200], raw_text[:200]
                     )
-                    break  # JSON error → next model
+                    if attempt < max_attempts:
+                        await asyncio.sleep(1)
+                        continue
+                    # Exhausted retries -> outer loop will gracefully fall to next item in cascade
 
                 except Exception as exc:
                     last_error = exc
@@ -400,7 +455,7 @@ async def generate_plan(
                     if attempt < max_attempts:
                         await asyncio.sleep(1)
                         continue
-                    break  # Exhausted retries → next model
+                    break  # Exhausted retries -> next model
 
             if plan is not None:
                 break
