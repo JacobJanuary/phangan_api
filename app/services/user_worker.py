@@ -312,6 +312,134 @@ async def process_gender_background(
     except Exception as e:
         logger.error("DB update failed for gender %s: %s", telegram_id, e)
 
+
+# ===========================================================================
+# Language Detection Cascade
+# ===========================================================================
+
+_CYRILLIC_RE = re.compile(r"[а-яА-ЯёЁ]")
+
+
+def _has_cyrillic(text: str) -> bool:
+    """Returns True if text contains any Cyrillic character."""
+    return bool(_CYRILLIC_RE.search(text))
+
+
+def _name_in_ru_dict(first_name: str) -> bool:
+    """Check if the name (Latin or Cyrillic) is in the Russian name dictionaries."""
+    low = first_name.strip().lower()
+    # Check Cyrillic dictionaries
+    if low in _FEMALE_NAMES_RU or low in _MALE_NAMES_RU:
+        return True
+    # Check transliterated Russian names in international list that are distinctly Russian
+    # These names are common in Russian culture even when written in Latin
+    _RU_LATIN_NAMES = {
+        "polina", "dasha", "natalia", "natalya", "natasha", "sergei",
+        "dmitry", "nikolai", "alexey", "ekaterina", "anastasia",
+        "ruslan", "yuri", "maksim", "fedor", "jaroslav", "konstantin",
+        "dinar", "marina", "olga", "elena", "boris", "igor", "anton",
+        "roman", "denis",
+    }
+    return low in _RU_LATIN_NAMES
+
+
+async def _fetch_bio_language(telegram_id: int) -> str | None:
+    """
+    Call Telegram getChat API to read user bio.
+    Returns 'ru' if bio contains Cyrillic, None otherwise.
+    """
+    settings = get_settings()
+    if not settings.BOT_TOKEN:
+        return None
+
+    try:
+        url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/getChat"
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(url, json={"chat_id": telegram_id})
+            data = resp.json()
+
+        if not data.get("ok"):
+            logger.debug("getChat failed for %s: %s", telegram_id, data)
+            return None
+
+        result = data.get("result", {})
+        bio = result.get("bio", "")
+        last_name = result.get("last_name", "")
+
+        # Check bio and last_name for Cyrillic
+        if _has_cyrillic(bio) or _has_cyrillic(last_name):
+            logger.info("Language for telegram_id=%s detected as 'ru' via bio/last_name", telegram_id)
+            return "ru"
+
+        return None
+    except Exception as e:
+        logger.warning("getChat API call failed for %s: %s", telegram_id, e)
+        return None
+
+
+async def detect_language(
+    first_name: str,
+    telegram_language_code: str,
+    telegram_id: int | None = None,
+) -> str:
+    """
+    Cascading language detection:
+      1. Cyrillic in first_name → 'ru' (100% reliable)
+      2. Telegram language_code contains 'ru' → 'ru'
+      3. Name in Russian name dictionary → 'ru'
+      4. getChat API → check bio/last_name for Cyrillic
+      5. Default → 'en'
+    """
+    # Layer 1: Cyrillic in name = definitely Russian
+    if _has_cyrillic(first_name):
+        logger.info("Language for '%s' resolved via Cyrillic in name: ru", first_name)
+        return "ru"
+
+    # Layer 2: Telegram language_code
+    t_lang = str(telegram_language_code).lower()
+    if "ru" in t_lang:
+        logger.info("Language for '%s' resolved via language_code: ru", first_name)
+        return "ru"
+
+    # Layer 3: Name in Russian dictionary (covers Polina, Sergei, Dasha, etc.)
+    clean_name = first_name.strip().split()[0] if first_name.strip() else first_name
+    if _name_in_ru_dict(clean_name):
+        logger.info("Language for '%s' resolved via RU name dictionary: ru", first_name)
+        return "ru"
+
+    # Layer 4: getChat API — check bio for Cyrillic
+    if telegram_id:
+        bio_lang = await _fetch_bio_language(telegram_id)
+        if bio_lang:
+            return bio_lang
+
+    # Layer 5: Default
+    logger.info("Language for '%s' defaulting to: en", first_name)
+    return "en"
+
+
+async def process_language_background(
+    pool: asyncpg.Pool,
+    telegram_id: int,
+    first_name: str,
+    telegram_language_code: str,
+) -> None:
+    """Background task for cascading language detection with DB update."""
+    logger.info("Starting language worker for telegram_id=%s", telegram_id)
+    language = await detect_language(first_name, telegram_language_code, telegram_id)
+
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE users SET language = $1 WHERE telegram_id = $2",
+                language,
+                telegram_id,
+            )
+        logger.info("Language worker completed for telegram_id=%s: %s", telegram_id, language)
+    except Exception as e:
+        logger.error("DB update failed for language %s: %s", telegram_id, e)
+
+
 async def process_avatar_background(
     pool: asyncpg.Pool,
     telegram_id: int,

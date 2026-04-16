@@ -14,7 +14,14 @@ from pydantic import BaseModel
 from app.core.telegram_auth import validate_telegram_data
 from app.db.database import get_pool
 from app.core.jwt import create_access_token
-from app.services.user_worker import process_gender_background, process_avatar_background
+from app.services.user_worker import (
+    process_gender_background,
+    process_avatar_background,
+    process_language_background,
+    detect_language,
+    _has_cyrillic,
+    _name_in_ru_dict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +49,17 @@ async def init_auth(
     photo_url = user_data.get("photo_url", "")
     t_lang = str(user_data.get("language_code", "")).lower()
     
-    language = "ru" if "ru" in t_lang else "en"
+    # Quick synchronous language detection (layers 1-3, no API call)
+    # Layer 1: Cyrillic in name → ru
+    # Layer 2: Telegram language_code → ru
+    # Layer 3: Name in Russian dictionary → ru
+    if _has_cyrillic(first_name):
+        language = "ru"
+    elif "ru" in t_lang:
+        language = "ru"
+    else:
+        clean_name = first_name.strip().split()[0] if first_name.strip() else first_name
+        language = "ru" if _name_in_ru_dict(clean_name) else "en"
 
     if not telegram_id:
         raise HTTPException(
@@ -58,9 +75,8 @@ async def init_auth(
                 INSERT INTO users (telegram_id, first_name, is_phantom, mood, language)
                 VALUES ($1, $2, False, NULL, $3)
                 ON CONFLICT (telegram_id) DO UPDATE 
-                SET first_name = EXCLUDED.first_name,
-                    language = EXCLUDED.language
-                RETURNING id, gender, mood, avatar_path, updated_at, (xmax = 0) AS is_new
+                SET first_name = EXCLUDED.first_name
+                RETURNING id, gender, mood, avatar_path, language, updated_at, (xmax = 0) AS is_new
                 """,
                 telegram_id,
                 first_name,
@@ -71,6 +87,7 @@ async def init_auth(
             db_gender = row["gender"] or "unknown"
             current_mood = row["mood"]
             avatar_path = row["avatar_path"]
+            db_language = row["language"] or language
             updated_at = row["updated_at"]
             is_new = row["is_new"]
 
@@ -145,7 +162,17 @@ async def init_auth(
             first_name=first_name,
             language=language,
         )
-        
+
+    # Language refinement via getChat API (background, layer 4)
+    if is_new:
+        background_tasks.add_task(
+            process_language_background,
+            pool=pool,
+            telegram_id=telegram_id,
+            first_name=first_name,
+            telegram_language_code=t_lang,
+        )
+
     if is_new or not avatar_path:
         background_tasks.add_task(
             process_avatar_background,
@@ -165,7 +192,7 @@ async def init_auth(
             "first_name": first_name,
             "gender": db_gender,
             "current_mood": current_mood,
-            "lang_code": language,
+            "lang_code": db_language if not is_new else language,
         },
         "i18n": {
             "onboarding": onboarding_data,
