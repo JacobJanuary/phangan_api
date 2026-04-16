@@ -143,6 +143,7 @@ async def init_auth(
             pool=pool,
             telegram_id=telegram_id,
             first_name=first_name,
+            language=language,
         )
         
     if is_new or not avatar_path:
