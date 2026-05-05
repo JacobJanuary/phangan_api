@@ -10,3 +10,5 @@ Pillow>=10.0.0
 mediapipe>=0.10.0
 PyJWT>=2.8.0
 python-multipart>=0.0.9
+yoyo-migrations>=8.2.0
+psycopg2-binary>=2.9.0
