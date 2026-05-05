@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import asyncpg
 import os
 
-from app.core.config import get_settings
+from core.config import get_settings
 
 # Configure basic logging
 logging.basicConfig(

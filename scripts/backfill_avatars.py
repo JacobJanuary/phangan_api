@@ -14,7 +14,7 @@ from PIL import Image
 root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root))
 
-from app.core.config import get_settings
+from core.config import get_settings
 
 logging.basicConfig(
     level=logging.INFO,

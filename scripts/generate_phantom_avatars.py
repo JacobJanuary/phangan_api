@@ -30,7 +30,7 @@ import asyncpg
 from PIL import Image
 from anthropic import AsyncAnthropic
 
-from app.core.config import get_settings
+from core.config import get_settings
 
 logging.basicConfig(
     level=logging.INFO,
