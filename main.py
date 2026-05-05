@@ -1,11 +1,11 @@
-"""
-Phangan API — main entry point.
+"""Phangan API — main entry point (composition root).
 
-Enterprise-grade FastAPI application with:
-  - asyncpg connection pool (lifespan managed)
-  - Security middleware (IP blacklisting)
-  - CORS for Telegram Mini App
-  - Modular API routers
+Wires together:
+- Settings + Constants (core.config)
+- asyncpg pool (lifespan)
+- Error handlers (core.error_handlers)
+- Middlewares (CORS + legacy SecurityMiddleware)
+- Feature routers (features.*)
 """
 
 from __future__ import annotations
@@ -13,87 +13,110 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
+import asyncpg
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.auth import router as auth_router
-from app.api.media import router as media_router
-from app.api.users import router as users_router
-from app.api.v1_events import router as v1_events_router
-from app.api.v1_planner import router as v1_planner_router
-from app.api.v1_swipes import router as v1_swipes_router
-from app.api.v1_translations import router as v1_translations_router
-from app.api.bot_webhook import router as bot_webhook_router, register_webhook
-from app.core.config import get_settings
 from app.core.middlewares import SecurityMiddleware
-from app.db.database import close_pool, create_pool
+from core.config import get_settings
+from core.error_handlers import register_error_handlers
+from core.logging import configure_logging
+from features.auth.routes import router as auth_router
+from features.bot.routes import router as bot_router
+from features.bot.service import register_webhook
+from features.events.routes import router as events_router
+from features.media.routes import router as media_router
+from features.planner.routes import router as planner_router
+from features.swipes.routes import router as swipes_router
+from features.translations.routes import router as translations_router
+from features.users.routes import router as users_router
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s │ %(levelname)-7s │ %(name)s │ %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Application lifespan
-# ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage startup and shutdown resources."""
     settings = get_settings()
-    logger.info("🚀 Starting Phangan API...")
-    await create_pool(settings)
-    # Register Telegram webhook for bot commands (/start etc.)
+    configure_logging(level=settings.LOG_LEVEL, format=settings.LOG_FORMAT)
+    logger.info("Starting Phangan API")
+
+    pool = await asyncpg.create_pool(
+        host=settings.DB_HOST,
+        port=settings.DB_PORT,
+        database=settings.DB_NAME,
+        user=settings.DB_USER,
+        password=settings.DB_PASSWORD,
+        min_size=settings.DB_MIN_POOL,
+        max_size=settings.DB_MAX_POOL,
+    )
+    logger.info(
+        "DB pool ready",
+        extra={
+            "host": settings.DB_HOST,
+            "db": settings.DB_NAME,
+            "min": settings.DB_MIN_POOL,
+            "max": settings.DB_MAX_POOL,
+        },
+    )
+
+    app.state.settings = settings
+    app.state.pool = pool
+
+    # Telegram webhook registration is best-effort.
     try:
-        await register_webhook("https://api.fastpump.fun")
+        await register_webhook(settings)
     except Exception as exc:
-        logger.warning("⚠️ Webhook registration failed (non-fatal): %s", exc)
-    yield
-    await close_pool()
-    logger.info("👋 Phangan API shut down.")
+        logger.warning("Webhook registration failed (non-fatal): %s", exc)
+
+    # Backwards-compat: legacy `app.db.database._pool` global is still used
+    # by code that hasn't been migrated yet (facepile/distance services).
+    try:
+        from app.db import database as _legacy_db  # noqa: WPS433
+
+        _legacy_db._pool = pool  # type: ignore[attr-defined]
+    except Exception as exc:
+        logger.warning("Legacy DB pool wiring skipped: %s", exc)
+
+    try:
+        yield
+    finally:
+        await pool.close()
+        logger.info("Phangan API shut down")
 
 
-# ---------------------------------------------------------------------------
-# Application factory
-# ---------------------------------------------------------------------------
 app = FastAPI(
     title="Phangan Events API",
     description="Production-ready API for the VibeRadar Koh Phangan Telegram Mini App",
-    version="2.0.0",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
-# ── Middleware stack (order matters: first added = outermost) ─────────────
-settings = get_settings()
+# Error handlers (translate domain exceptions → HTTP responses).
+register_error_handlers(app)
 
+# Middlewares (order: first added = outermost).
 app.add_middleware(SecurityMiddleware)
 
+_settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=_settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Routers ──────────────────────────────────────────────────────────────
+# Feature routers.
 app.include_router(media_router)
 app.include_router(auth_router)
 app.include_router(users_router)
-app.include_router(v1_events_router)
-app.include_router(v1_swipes_router)
-app.include_router(v1_planner_router)
-app.include_router(v1_translations_router)
-app.include_router(bot_webhook_router)
+app.include_router(events_router)
+app.include_router(swipes_router)
+app.include_router(planner_router)
+app.include_router(translations_router)
+app.include_router(bot_router)
 
 
-# ── Health check (no API key required) ────────────────────────────────────
 @app.get("/health", tags=["system"])
-async def health_check():
-    """Simple health probe for monitoring."""
+async def health_check() -> dict:
     return {"status": "ok", "service": "phangan-api"}

@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     MEDIA_DIR: str = "/home/ubuntu/Phangan/TG_parcer/media"
     SHARE_CARD_DIR: str = "/home/ubuntu/Phangan/TG_parcer/media/share"
     AVATARS_DIR: str = "avatars"
+    PUBLIC_API_BASE_URL: str = "https://api.fastpump.fun"
+    PUBLIC_MEDIA_BASE_URL: str = "https://api.fastpump.fun/api/media"
+    PUBLIC_SHARE_BASE_URL: str = "https://api.fastpump.fun/api/media/share"
+    PUBLIC_MINIAPP_URL: str = "https://phangan.fastpump.fun/"
+    TELEGRAM_BOT_USERNAME: str = "GoPhanganBot"
 
     # ── Observability ────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
