@@ -70,6 +70,12 @@ class AuthService:
         updated_at = row["updated_at"]
         is_new = row["is_new"]
 
+        # Effective UI language: returning users keep what they had in DB
+        # (otherwise switching Telegram client language would silently swap
+        # their interface to a different locale on every login). New users
+        # take whatever was just detected.
+        effective_language = language if is_new else db_language
+
         # Mood TTL — wipe stale moods.
         if current_mood is not None and UsersRepository.is_mood_stale(
             updated_at, hours_ttl=6
@@ -77,8 +83,8 @@ class AuthService:
             await users_repo.expire_stale_mood(internal_id)
             current_mood = None
 
-        onboarding = await auth_repo.get_onboarding(language)
-        ui_translations = await auth_repo.get_ui_translations(language)
+        onboarding = await auth_repo.get_onboarding(effective_language)
+        ui_translations = await auth_repo.get_ui_translations(effective_language)
 
         # Background enrichment workers.
         if is_new or db_gender == "unknown":
@@ -123,7 +129,7 @@ class AuthService:
                 "first_name": first_name,
                 "gender": db_gender,
                 "current_mood": current_mood,
-                "lang_code": db_language if not is_new else language,
+                "lang_code": effective_language,
             },
             "i18n": {
                 "onboarding": onboarding,
