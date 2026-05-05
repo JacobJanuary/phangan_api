@@ -33,6 +33,8 @@ _TARGET_IMAGE_WIDTH = 600
 class EventsService:
     pool: asyncpg.Pool
     settings: Settings
+    facepile_service: object | None = None  # shared.facepile.service.FacepileService
+    distance_service: object | None = None  # shared.distance.service.DistanceService
 
     @staticmethod
     def _now_today_tomorrow() -> tuple[datetime, date, date]:
@@ -224,14 +226,8 @@ class EventsService:
             raise AuthorizationError("Not authorized to edit this event")
 
     async def _enrich_facepile(self, events: list[dict], *, user_id: int) -> None:
-        # Facepile + distance enrichment still live in the legacy services
-        # module — preserved verbatim to keep the HTTP contract identical.
-        # Will be migrated to a hexagonal `shared.facepile` adapter in a
-        # follow-up PR (Phase 3.5).
-        try:
-            from app.services.facepile_service import get_facepile_batch  # noqa: WPS433
-        except Exception as exc:
-            logger.warning("Facepile module import failed: %s", exc)
+        if self.facepile_service is None:
+            logger.debug("FacepileService not wired — skipping enrichment")
             return
 
         try:
@@ -244,8 +240,10 @@ class EventsService:
         event_ids = [int(ev["id"]) for ev in events]
         event_categories = {int(ev["id"]): ev.get("category", "") for ev in events}
         try:
-            facepile_data = await get_facepile_batch(
-                event_ids, event_categories, viewer_gender, self.pool
+            facepile_data = await self.facepile_service.get_batch(  # type: ignore[attr-defined]
+                event_ids=event_ids,
+                event_categories=event_categories,
+                viewer_gender=viewer_gender,
             )
         except Exception as exc:
             logger.warning("Facepile enrichment failed: %s", exc)
@@ -260,12 +258,12 @@ class EventsService:
     async def _enrich_distances(
         self, events: list[dict], user_lat: float, user_lng: float
     ) -> None:
-        try:
-            from app.services.distance_service import enrich_with_distances  # noqa: WPS433
-        except Exception as exc:
-            logger.warning("Distance module import failed: %s", exc)
+        if self.distance_service is None:
+            logger.debug("DistanceService not wired — skipping enrichment")
             return
         try:
-            await enrich_with_distances(events, user_lat, user_lng)
+            await self.distance_service.enrich_events(  # type: ignore[attr-defined]
+                events, user_lat=user_lat, user_lng=user_lng
+            )
         except Exception as exc:
             logger.warning("Distance enrichment failed: %s", exc)

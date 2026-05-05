@@ -17,7 +17,7 @@ import asyncpg
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.middlewares import SecurityMiddleware
+from core.middlewares import SecurityMiddleware
 from core.config import get_settings
 from core.error_handlers import register_error_handlers
 from core.logging import configure_logging
@@ -62,20 +62,27 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.pool = pool
 
+    # Hexagonal shared services (Phase 3.5).
+    from shared.distance.mapbox_adapter import MapboxMatrixProvider
+    from shared.distance.service import DistanceService
+    from shared.facepile.service import FacepileService
+
+    routing = (
+        MapboxMatrixProvider(access_token=settings.MAPBOX_TOKEN)
+        if settings.MAPBOX_TOKEN
+        else None
+    )
+    app.state.distance_service = DistanceService(routing=routing)
+    app.state.facepile_service = FacepileService(
+        pool=pool,
+        media_base_url=settings.PUBLIC_MEDIA_BASE_URL,
+    )
+
     # Telegram webhook registration is best-effort.
     try:
         await register_webhook(settings)
     except Exception as exc:
         logger.warning("Webhook registration failed (non-fatal): %s", exc)
-
-    # Backwards-compat: legacy `app.db.database._pool` global is still used
-    # by code that hasn't been migrated yet (facepile/distance services).
-    try:
-        from app.db import database as _legacy_db  # noqa: WPS433
-
-        _legacy_db._pool = pool  # type: ignore[attr-defined]
-    except Exception as exc:
-        logger.warning("Legacy DB pool wiring skipped: %s", exc)
 
     try:
         yield

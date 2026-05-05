@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 import asyncpg
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 
 from core.config import Settings
 from core.dependencies import get_current_user_id, get_pool_dep, get_settings_dep
@@ -15,8 +15,15 @@ from features.events.service import EventsService
 router = APIRouter(prefix="/api/v1", tags=["events-v1"])
 
 
-def _service(pool: asyncpg.Pool, settings: Settings) -> EventsService:
-    return EventsService(pool=pool, settings=settings)
+def _service(
+    request: Request, pool: asyncpg.Pool, settings: Settings
+) -> EventsService:
+    return EventsService(
+        pool=pool,
+        settings=settings,
+        facepile_service=getattr(request.app.state, "facepile_service", None),
+        distance_service=getattr(request.app.state, "distance_service", None),
+    )
 
 
 @router.get(
@@ -33,11 +40,12 @@ async def list_events(
     offset: int = Query(default=0, ge=0),
     user_lat: Optional[float] = Query(default=None, alias="lat"),
     user_lng: Optional[float] = Query(default=None, alias="lng"),
+    request: Request = None,  # type: ignore[assignment]
     pool: asyncpg.Pool = Depends(get_pool_dep),
     settings: Settings = Depends(get_settings_dep),
     user_id: int = Depends(get_current_user_id),
 ) -> dict:
-    return await _service(pool, settings).list_events(
+    return await _service(request, pool, settings).list_events(
         user_id=user_id,
         lang=lang,
         category=category or "all",
@@ -53,11 +61,12 @@ async def list_events(
 async def get_event(
     event_id: int,
     lang: Literal["en", "ru"] = Query(default="ru"),
+    request: Request = None,  # type: ignore[assignment]
     pool: asyncpg.Pool = Depends(get_pool_dep),
     settings: Settings = Depends(get_settings_dep),
     user_id: int = Depends(get_current_user_id),
 ) -> dict:
-    return await _service(pool, settings).get_event(
+    return await _service(request, pool, settings).get_event(
         event_id, user_id=user_id, lang=lang
     )
 
@@ -66,11 +75,12 @@ async def get_event(
 async def update_event(
     event_id: int,
     payload: EventUpdate,
+    request: Request = None,  # type: ignore[assignment]
     pool: asyncpg.Pool = Depends(get_pool_dep),
     settings: Settings = Depends(get_settings_dep),
     user_id: int = Depends(get_current_user_id),
 ) -> dict:
-    return await _service(pool, settings).update_event(
+    return await _service(request, pool, settings).update_event(
         event_id, payload, user_id=user_id
     )
 
@@ -78,11 +88,12 @@ async def update_event(
 @router.delete("/events/{event_id}", summary="Delete an event (Only Author)")
 async def delete_event(
     event_id: int,
+    request: Request = None,  # type: ignore[assignment]
     pool: asyncpg.Pool = Depends(get_pool_dep),
     settings: Settings = Depends(get_settings_dep),
     user_id: int = Depends(get_current_user_id),
 ) -> dict:
-    return await _service(pool, settings).delete_event(event_id, user_id=user_id)
+    return await _service(request, pool, settings).delete_event(event_id, user_id=user_id)
 
 
 @router.post(
@@ -93,12 +104,13 @@ async def delete_event(
 async def upload_event_image(
     event_id: int,
     file: UploadFile = File(...),
+    request: Request = None,  # type: ignore[assignment]
     pool: asyncpg.Pool = Depends(get_pool_dep),
     settings: Settings = Depends(get_settings_dep),
     user_id: int = Depends(get_current_user_id),
 ) -> dict:
     content = await file.read()
-    return await _service(pool, settings).upload_image(
+    return await _service(request, pool, settings).upload_image(
         event_id,
         user_id=user_id,
         content=content,

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 class SwipesService:
     pool: asyncpg.Pool
     settings: Settings
+    facepile_service: object | None = None
 
     async def save_swipe(self, *, user_id: int, payload: SwipeCreate) -> None:
         try:
@@ -82,7 +83,11 @@ class SwipesService:
         # Reuse the same facepile enrichment as the events feature.
         all_events = upcoming + result.get("past", [])
         if all_events:
-            events_service = EventsService(pool=self.pool, settings=self.settings)
+            events_service = EventsService(
+                pool=self.pool,
+                settings=self.settings,
+                facepile_service=self.facepile_service,
+            )
             await events_service._enrich_facepile(all_events, user_id=user_id)  # noqa: SLF001
 
         return result
