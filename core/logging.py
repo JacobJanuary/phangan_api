@@ -160,20 +160,21 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         start = time.perf_counter()
         try:
             response = await call_next(request)
-        finally:
             elapsed_ms = (time.perf_counter() - start) * 1000
+
+            response.headers[self.HEADER_NAME] = request_id
+
+            self._logger.info(
+                "request completed",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status": response.status_code,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "client_ip": request.client.host if request.client else None,
+                },
+            )
+            return response
+        finally:
+            # Reset *after* the access log so request_id is still in scope.
             _request_id_var.reset(token)
-
-        response.headers[self.HEADER_NAME] = request_id
-
-        self._logger.info(
-            "request completed",
-            extra={
-                "method": request.method,
-                "path": request.url.path,
-                "status": response.status_code,
-                "elapsed_ms": round(elapsed_ms, 2),
-                "client_ip": request.client.host if request.client else None,
-            },
-        )
-        return response

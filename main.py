@@ -20,7 +20,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from core.middlewares import SecurityMiddleware
 from core.config import get_settings
 from core.error_handlers import register_error_handlers
-from core.logging import configure_logging
+from core.logging import RequestContextMiddleware, configure_logging
+from core.metrics import MetricsMiddleware, metrics_endpoint
 from features.auth.routes import router as auth_router
 from features.bot.routes import router as bot_router
 from features.bot.service import register_webhook
@@ -103,6 +104,8 @@ register_error_handlers(app)
 
 # Middlewares (order: first added = outermost).
 app.add_middleware(SecurityMiddleware)
+app.add_middleware(RequestContextMiddleware)
+app.add_middleware(MetricsMiddleware)
 
 _settings = get_settings()
 app.add_middleware(
@@ -127,3 +130,8 @@ app.include_router(bot_router)
 @app.get("/health", tags=["system"])
 async def health_check() -> dict:
     return {"status": "ok", "service": "phangan-api"}
+
+
+app.add_api_route(
+    "/metrics", metrics_endpoint, methods=["GET"], tags=["system"], include_in_schema=False
+)
