@@ -81,10 +81,14 @@ class EventsRepository:
         elif date_filter == "tomorrow":
             conditions.append(f"e.event_date = {_p(tomorrow)}")
         if category == "party":
-            conditions.append(f"e.category = {_p('Party')}")
-        elif category == "chill":
+            # Match builders.PARTY_CATEGORIES — case-insensitive.
             conditions.append(
-                f"e.category = ANY({_p(['Chill', 'Sport', 'Education', 'Business'])}::text[])"
+                f"LOWER(e.category) = ANY({_p(['party', 'concert', 'dance', 'ecstatic_dance'])}::text[])"
+            )
+        elif category == "chill":
+            # Everything not in the party allow-list, including NULL/empty.
+            conditions.append(
+                f"(LOWER(COALESCE(e.category, '')) <> ALL({_p(['party', 'concert', 'dance', 'ecstatic_dance'])}::text[]))"
             )
 
         where = "WHERE " + " AND ".join(conditions)

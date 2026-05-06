@@ -11,8 +11,18 @@ from typing import Any
 
 import asyncpg
 
-# Categories that map to the visual `chill` bucket.
-CHILL_CATEGORIES: frozenset[str] = frozenset({"chill", "sport", "education", "business"})
+# Categories that map to the visual `party` bucket (loud / dance-driven).
+# Everything else — yoga, wellness, workshop, sport, market, etc — falls into
+# `chill`. Source data lives in the `events.category` column populated by the
+# parser; values are lowercase tokens like 'yoga', 'concert', 'sound_healing'.
+# Match is case-insensitive (.lower()).
+PARTY_CATEGORIES: frozenset[str] = frozenset(
+    {"party", "concert", "dance", "ecstatic_dance"}
+)
+
+# Backwards-compat alias — kept so external scripts that imported the symbol
+# don't break. New code should use PARTY_CATEGORIES.
+CHILL_CATEGORIES: frozenset[str] = frozenset()
 
 TYPE_COLOR: dict[str, str] = {"party": "#ff007f", "chill": "#00f3ff"}
 
@@ -91,9 +101,14 @@ def is_live(ev_date: date | None, ev_time: str | None, today: date, now_bkk: dat
 
 
 def event_type(category: str | None) -> str:
+    """Map a parser category token to one of the two UI buckets.
+
+    PARTY = explicit allow-list of loud/dance categories.
+    CHILL = everything else (default), including empty/unknown.
+    """
     if not category:
         return "chill"
-    return "chill" if category.lower() in CHILL_CATEGORIES else "party"
+    return "party" if category.lower() in PARTY_CATEGORIES else "chill"
 
 
 def fomo_hook(price_thb: int | None, filter_score: int | None, lang: str) -> str | None:

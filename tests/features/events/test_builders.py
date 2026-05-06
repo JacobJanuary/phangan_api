@@ -47,10 +47,20 @@ def test_parse_jsonb_dict_plain_string_mirrored() -> None:
 
 
 def test_event_type_chill_buckets() -> None:
-    assert event_type("Chill") == "chill"
-    assert event_type("sport") == "chill"
+    # PARTY = explicit allow-list (case-insensitive).
     assert event_type("party") == "party"
+    assert event_type("Party") == "party"
+    assert event_type("concert") == "party"
+    assert event_type("dance") == "party"
+    assert event_type("ecstatic_dance") == "party"
+    # Everything else collapses into chill.
+    assert event_type("yoga") == "chill"
+    assert event_type("workshop") == "chill"
+    assert event_type("muay_thai") == "chill"
+    assert event_type("sound_healing") == "chill"
+    assert event_type("Chill") == "chill"
     assert event_type(None) == "chill"
+    assert event_type("") == "chill"
 
 
 def test_date_info_today_tomorrow() -> None:
