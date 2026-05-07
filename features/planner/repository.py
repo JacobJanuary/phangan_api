@@ -31,7 +31,7 @@ class PlannerRepository:
                        v.lat AS venue_lat, v.lng AS venue_lng
                 FROM user_swipes s
                 JOIN events e ON e.id = s.event_id
-                LEFT JOIN venues v ON e.venue_id = v.id
+                LEFT JOIN discovery_venues v ON e.venue_id = v.id
                 WHERE s.user_id = $1
                   AND s.direction = 'right'
                   AND e.event_date = $2

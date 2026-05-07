@@ -35,7 +35,7 @@ _EVENT_COLUMNS = """
 _FROM_JOIN = """
     FROM user_swipes s
     JOIN events e ON e.id = s.event_id
-    LEFT JOIN venues v ON e.venue_id = v.id
+    LEFT JOIN discovery_venues v ON e.venue_id = v.id
 """
 
 _BASE_WHERE = "WHERE s.user_id = $1 AND s.direction = 'right'"

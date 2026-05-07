@@ -100,7 +100,7 @@ class EventsRepository:
                 COUNT(*) OVER() AS total_count,
                 {_EVENT_PROJECTION}
             FROM events e
-            LEFT JOIN venues v ON e.venue_id = v.id
+            LEFT JOIN discovery_venues v ON e.venue_id = v.id
             {where}
             ORDER BY e.event_date ASC, e.event_time ASC NULLS LAST,
                      e.filter_score DESC NULLS LAST
@@ -115,7 +115,7 @@ class EventsRepository:
         query = f"""
             SELECT {_EVENT_PROJECTION}
             FROM events e
-            LEFT JOIN venues v ON e.venue_id = v.id
+            LEFT JOIN discovery_venues v ON e.venue_id = v.id
             WHERE e.id = $1
         """
         async with self.pool.acquire() as conn:
