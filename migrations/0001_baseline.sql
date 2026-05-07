@@ -579,8 +579,7 @@ CREATE TABLE public.users (
     created_at timestamp with time zone DEFAULT now(),
     is_aesthetic boolean DEFAULT true,
     language character varying(10) DEFAULT 'en'::character varying,
-    updated_at timestamp with time zone DEFAULT now(),
-    current_mood character varying(50)
+    updated_at timestamp with time zone DEFAULT now()
 );
 
 
