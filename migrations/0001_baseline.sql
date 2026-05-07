@@ -1,13 +1,9 @@
 --
--- Migration: 0001_baseline
--- Source: pg_dump --schema-only of production DB (ThaiApp)
--- Date: 2026-05-05
+-- PostgreSQL database dump
 --
--- This file represents the schema state at the moment migrations were
--- introduced into the project. On an existing database it MUST be marked
--- as applied without execution (`yoyo mark 0001_baseline.sql`).
--- On a fresh database, applying this file creates the full schema.
---
+
+\restrict N5rShRKHfaSab8F6FFtliEYMxcYSE1l0Tovs90XXIuGt7X2DFuwhWfNSvksdFkx
+
 -- Dumped from database version 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1)
 -- Dumped by pg_dump version 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1)
 
@@ -23,17 +19,17 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: pg_trgm; Type: EXTENSION; Schema: -; Owner: -
+-- Name: public; Type: SCHEMA; Schema: -; Owner: -
 --
 
-CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+CREATE SCHEMA public;
 
 
 --
--- Name: EXTENSION pg_trgm; Type: COMMENT; Schema: -; Owner: -
+-- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: -
 --
 
-COMMENT ON EXTENSION pg_trgm IS 'text similarity measurement and index searching based on trigrams';
+COMMENT ON SCHEMA public IS 'standard public schema';
 
 
 --
@@ -140,6 +136,43 @@ $$;
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
+
+--
+-- Name: _yoyo_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public._yoyo_log (
+    id character varying(36) NOT NULL,
+    migration_hash character varying(64),
+    migration_id character varying(255),
+    operation character varying(10),
+    username character varying(255),
+    hostname character varying(255),
+    comment character varying(255),
+    created_at_utc timestamp without time zone
+);
+
+
+--
+-- Name: _yoyo_migration; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public._yoyo_migration (
+    migration_hash character varying(64) NOT NULL,
+    migration_id character varying(255),
+    applied_at_utc timestamp without time zone
+);
+
+
+--
+-- Name: _yoyo_version; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public._yoyo_version (
+    version integer NOT NULL,
+    installed_at_utc timestamp without time zone
+);
+
 
 --
 -- Name: app_i18n; Type: TABLE; Schema: public; Owner: -
@@ -334,8 +367,29 @@ CREATE TABLE public.discovery_venues (
     area character varying(100),
     formatted_address text,
     is_trash boolean DEFAULT false NOT NULL,
+    id integer NOT NULL,
     CONSTRAINT discovery_venues_moderation_status_check CHECK ((moderation_status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'hidden'::text])))
 );
+
+
+--
+-- Name: discovery_venues_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.discovery_venues_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: discovery_venues_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.discovery_venues_id_seq OWNED BY public.discovery_venues.id;
 
 
 --
@@ -604,55 +658,6 @@ ALTER SEQUENCE public.users_id_seq OWNED BY public.users.id;
 
 
 --
--- Name: venue_aliases; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.venue_aliases (
-    query character varying(255) NOT NULL,
-    venue_id integer,
-    created_at timestamp with time zone DEFAULT timezone('utc'::text, now())
-);
-
-
---
--- Name: venues; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.venues (
-    id integer NOT NULL,
-    name text NOT NULL,
-    name_normalized text,
-    lat double precision,
-    lng double precision,
-    google_maps_url text,
-    instagram_url text,
-    address text,
-    description text,
-    cached_at timestamp with time zone DEFAULT now()
-);
-
-
---
--- Name: venues_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.venues_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: venues_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.venues_id_seq OWNED BY public.venues.id;
-
-
---
 -- Name: vibe_pilot_cache; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -662,6 +667,17 @@ CREATE TABLE public.vibe_pilot_cache (
     input_hash text NOT NULL,
     plan_json jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT timezone('utc'::text, now())
+);
+
+
+--
+-- Name: yoyo_lock; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.yoyo_lock (
+    locked integer DEFAULT 1 NOT NULL,
+    ctime timestamp without time zone,
+    pid integer NOT NULL
 );
 
 
@@ -684,6 +700,13 @@ ALTER TABLE ONLY public.dashboard_users ALTER COLUMN id SET DEFAULT nextval('pub
 --
 
 ALTER TABLE ONLY public.discovered_chats ALTER COLUMN id SET DEFAULT nextval('public.discovered_chats_id_seq'::regclass);
+
+
+--
+-- Name: discovery_venues id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.discovery_venues ALTER COLUMN id SET DEFAULT nextval('public.discovery_venues_id_seq'::regclass);
 
 
 --
@@ -729,10 +752,27 @@ ALTER TABLE ONLY public.users ALTER COLUMN id SET DEFAULT nextval('public.users_
 
 
 --
--- Name: venues id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: _yoyo_log _yoyo_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.venues ALTER COLUMN id SET DEFAULT nextval('public.venues_id_seq'::regclass);
+ALTER TABLE ONLY public._yoyo_log
+    ADD CONSTRAINT _yoyo_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: _yoyo_migration _yoyo_migration_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public._yoyo_migration
+    ADD CONSTRAINT _yoyo_migration_pkey PRIMARY KEY (migration_hash);
+
+
+--
+-- Name: _yoyo_version _yoyo_version_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public._yoyo_version
+    ADD CONSTRAINT _yoyo_version_pkey PRIMARY KEY (version);
 
 
 --
@@ -781,6 +821,14 @@ ALTER TABLE ONLY public.dashboard_users
 
 ALTER TABLE ONLY public.discovered_chats
     ADD CONSTRAINT discovered_chats_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: discovery_venues discovery_venues_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.discovery_venues
+    ADD CONSTRAINT discovery_venues_id_key UNIQUE (id);
 
 
 --
@@ -888,35 +936,19 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: venue_aliases venue_aliases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.venue_aliases
-    ADD CONSTRAINT venue_aliases_pkey PRIMARY KEY (query);
-
-
---
--- Name: venues venues_name_unique; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.venues
-    ADD CONSTRAINT venues_name_unique UNIQUE (name);
-
-
---
--- Name: venues venues_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.venues
-    ADD CONSTRAINT venues_pkey PRIMARY KEY (id);
-
-
---
 -- Name: vibe_pilot_cache vibe_pilot_cache_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.vibe_pilot_cache
     ADD CONSTRAINT vibe_pilot_cache_pkey PRIMARY KEY (user_id, target_date);
+
+
+--
+-- Name: yoyo_lock yoyo_lock_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.yoyo_lock
+    ADD CONSTRAINT yoyo_lock_pkey PRIMARY KEY (locked);
 
 
 --
@@ -931,6 +963,13 @@ CREATE INDEX idx_discovered_status ON public.discovered_chats USING btree (statu
 --
 
 CREATE INDEX idx_discovered_unresolved ON public.discovered_chats USING btree (resolved) WHERE (resolved = false);
+
+
+--
+-- Name: idx_discovery_venues_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_discovery_venues_id ON public.discovery_venues USING btree (id);
 
 
 --
@@ -1032,6 +1071,13 @@ CREATE INDEX idx_events_trgm_ru ON public.events USING gin (((title ->> 'ru'::te
 
 
 --
+-- Name: idx_events_venue_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_events_venue_id ON public.events USING btree (venue_id) WHERE (venue_id IS NOT NULL);
+
+
+--
 -- Name: idx_harvested_content_hash; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1088,13 +1134,6 @@ CREATE INDEX idx_users_phantom_mood ON public.users USING btree (is_phantom, moo
 
 
 --
--- Name: idx_venues_normalized; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_venues_normalized ON public.venues USING btree (name_normalized) WHERE (name_normalized IS NOT NULL);
-
-
---
 -- Name: uq_discovered_chat_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1113,20 +1152,6 @@ CREATE UNIQUE INDEX uq_discovered_invite ON public.discovered_chats USING btree 
 --
 
 CREATE UNIQUE INDEX uq_discovered_username ON public.discovered_chats USING btree (lower(username)) WHERE (username IS NOT NULL);
-
-
---
--- Name: uq_venue_name; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_venue_name ON public.venues USING btree (name) WHERE ((name IS NOT NULL) AND (name <> ''::text));
-
-
---
--- Name: venues_name_normalized_uniq; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX venues_name_normalized_uniq ON public.venues USING btree (name_normalized);
 
 
 --
@@ -1164,7 +1189,7 @@ ALTER TABLE ONLY public.events
 --
 
 ALTER TABLE ONLY public.events
-    ADD CONSTRAINT events_venue_id_fkey FOREIGN KEY (venue_id) REFERENCES public.venues(id) ON DELETE SET NULL;
+    ADD CONSTRAINT events_venue_id_fkey FOREIGN KEY (venue_id) REFERENCES public.discovery_venues(id) ON DELETE SET NULL;
 
 
 --
@@ -1180,7 +1205,7 @@ ALTER TABLE ONLY public.harvested_events
 --
 
 ALTER TABLE ONLY public.outreach_log
-    ADD CONSTRAINT outreach_log_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.events(id);
+    ADD CONSTRAINT outreach_log_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.events(id) ON DELETE CASCADE;
 
 
 --
@@ -1200,14 +1225,6 @@ ALTER TABLE ONLY public.user_swipes
 
 
 --
--- Name: venue_aliases venue_aliases_venue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.venue_aliases
-    ADD CONSTRAINT venue_aliases_venue_id_fkey FOREIGN KEY (venue_id) REFERENCES public.venues(id) ON DELETE CASCADE;
-
-
---
 -- Name: vibe_pilot_cache vibe_pilot_cache_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1219,4 +1236,5 @@ ALTER TABLE ONLY public.vibe_pilot_cache
 -- PostgreSQL database dump complete
 --
 
+\unrestrict N5rShRKHfaSab8F6FFtliEYMxcYSE1l0Tovs90XXIuGt7X2DFuwhWfNSvksdFkx
 
