@@ -7,7 +7,7 @@ from pathlib import Path
 # Add the project root to sys.path to resolve imports properly
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from app.core.config import get_settings
+from core.config import get_settings
 import asyncpg
 
 logging.basicConfig(level=logging.INFO)

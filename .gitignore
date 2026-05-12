@@ -10,6 +10,6 @@ __pycache__/
 .idea/
 .vscode/
 
-# Media and Phantom Data
-media/
-data/
+# Media and Phantom Data (root only — shared/media/ is source code)
+/media/
+/data/
