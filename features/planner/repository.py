@@ -51,6 +51,7 @@ class PlannerRepository:
                   AND e.event_date = $2
                   AND COALESCE(e.dedup_status, 'unique') = 'unique'
                   AND COALESCE(e.enrichment_status, 'complete') <> 'needs_repair'
+                  AND e.start_time IS NOT NULL
                 ORDER BY """ + _START_TIME_EXPR + """ ASC NULLS LAST
                 """,
                 user_id,

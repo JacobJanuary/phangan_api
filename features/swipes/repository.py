@@ -23,7 +23,6 @@ _DISPLAY_TIME_EXPR = """
 _UPCOMING_TIME_FILTER = f"""
     (
         e.event_date > (NOW() AT TIME ZONE 'Asia/Bangkok')::date
-        OR ({_START_TIME_EXPR}) IS NULL
         OR CASE
             WHEN e.category ILIKE 'party'
             THEN (e.event_date + ({_START_TIME_EXPR})) + interval '3 hours' >= NOW() AT TIME ZONE 'Asia/Bangkok'
@@ -53,6 +52,7 @@ _BASE_WHERE = """
       AND s.direction = 'right'
       AND COALESCE(e.dedup_status, 'unique') = 'unique'
       AND COALESCE(e.enrichment_status, 'complete') <> 'needs_repair'
+      AND e.start_time IS NOT NULL
 """
 
 

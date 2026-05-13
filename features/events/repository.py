@@ -28,6 +28,7 @@ _DISPLAY_TIME_EXPR = """
 _PUBLIC_EVENT_FILTER = """
     COALESCE(e.dedup_status, 'unique') = 'unique'
     AND COALESCE(e.enrichment_status, 'complete') <> 'needs_repair'
+    AND e.start_time IS NOT NULL
 """
 
 # Common SELECT projection for an event with its venue.
@@ -103,7 +104,6 @@ class EventsRepository:
             """
             (
                 e.event_date > (NOW() AT TIME ZONE 'Asia/Bangkok')::date
-                OR ({start_time}) IS NULL
                 OR CASE
                     WHEN e.category ILIKE 'party'
                     THEN (e.event_date + ({start_time})) + interval '3 hours' >= NOW() AT TIME ZONE 'Asia/Bangkok'
