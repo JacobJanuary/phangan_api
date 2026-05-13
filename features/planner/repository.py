@@ -27,7 +27,9 @@ class PlannerRepository:
             return await conn.fetch(
                 """
                 SELECT e.id, e.title, e.summary, e.category,
-                       e.event_date, e.event_time, e.location_name, e.price_thb,
+                       e.event_date,
+                       to_char(e.start_time, 'HH24:MI') AS event_time,
+                       e.location_name, e.price_thb,
                        v.lat AS venue_lat, v.lng AS venue_lng
                 FROM user_swipes s
                 JOIN events e ON e.id = s.event_id
@@ -35,7 +37,11 @@ class PlannerRepository:
                 WHERE s.user_id = $1
                   AND s.direction = 'right'
                   AND e.event_date = $2
-                ORDER BY e.event_time ASC NULLS LAST
+                  AND e.public_status = 'published'
+                  AND e.dedup_status = 'unique'
+                  AND e.enrichment_status <> 'needs_repair'
+                  AND e.start_time IS NOT NULL
+                ORDER BY e.start_time ASC NULLS LAST
                 """,
                 user_id,
                 target_date,

@@ -14,23 +14,101 @@ from features.events.schemas import EventUpdate
 # Common SELECT projection for an event with its venue.
 _EVENT_PROJECTION = """
     e.id,
+    e.public_id,
+    e.slug,
     e.title,
     e.summary,
     e.description,
+    e.sharing_description,
+    e.requirements,
+    e.keywords,
+    e.demographic_filters,
+    e.ai_addons,
+    e.capacity,
+    e.metadata_status,
+    e.public_status,
+    e.timezone,
     e.category,
+    e.event_type,
+    e.event_category,
+    e.event_sub_category,
     e.event_date,
-    e.event_time,
+    to_char(e.start_time, 'HH24:MI') AS event_time,
+    to_char(e.start_time, 'HH24:MI') AS start_time,
+    to_char(e.end_time, 'HH24:MI') AS end_time,
+    e.ends_next_day,
     e.location_name,
     e.price_thb,
+    e.currency_code,
     e.filter_score,
-    e.image_path,
+    COALESCE(cover.storage_key, e.image_path) AS image_path,
+    COALESCE(media.media, '[]'::jsonb) AS media,
+    COALESCE(faqs.faqs, '[]'::jsonb) AS faqs,
     e.source_chat_title,
     e.sender_id,
-    e.recurrence_type,
+    NULL::text AS recurrence_type,
     v.name AS venue_name,
     v.lat  AS venue_lat,
     v.lng  AS venue_lng,
-    COALESCE(e.google_maps_url, v.google_maps_url) AS venue_google_maps_url
+    v.google_maps_url AS venue_google_maps_url
+"""
+
+_EVENT_JOINS = """
+    LEFT JOIN discovery_venues v ON e.venue_id = v.id
+    LEFT JOIN LATERAL (
+        SELECT em.storage_key
+        FROM event_media em
+        WHERE em.event_id = e.id
+        ORDER BY em.is_cover DESC, em.sort_order ASC, em.id ASC
+        LIMIT 1
+    ) cover ON true
+    LEFT JOIN LATERAL (
+        SELECT jsonb_agg(
+            jsonb_build_object(
+                'id', em.id,
+                'type', em.media_type,
+                'storage_key', em.storage_key,
+                'source_url', em.source_url,
+                'sort_order', em.sort_order,
+                'is_cover', em.is_cover,
+                'metadata', em.metadata
+            )
+            ORDER BY em.is_cover DESC, em.sort_order ASC, em.id ASC
+        ) AS media
+        FROM event_media em
+        WHERE em.event_id = e.id
+    ) media ON true
+    LEFT JOIN LATERAL (
+        SELECT jsonb_agg(
+            jsonb_build_object(
+                'id', f.id,
+                'question', f.question,
+                'answer', f.answer,
+                'sort_order', f.sort_order
+            )
+            ORDER BY f.sort_order ASC, f.id ASC
+        ) AS faqs
+        FROM event_faqs f
+        WHERE f.event_id = e.id
+    ) faqs ON true
+"""
+
+_PUBLIC_EVENT_FILTER = """
+    e.public_status = 'published'
+    AND e.dedup_status = 'unique'
+    AND e.enrichment_status <> 'needs_repair'
+    AND e.start_time IS NOT NULL
+"""
+
+_UPCOMING_TIME_FILTER = """
+    (
+        e.event_date > (NOW() AT TIME ZONE 'Asia/Bangkok')::date
+        OR CASE
+            WHEN e.category ILIKE 'party'
+            THEN (e.event_date + e.start_time) + interval '3 hours' >= NOW() AT TIME ZONE 'Asia/Bangkok'
+            ELSE (e.event_date + e.start_time) >= NOW() AT TIME ZONE 'Asia/Bangkok'
+        END
+    )
 """
 
 
@@ -51,20 +129,8 @@ class EventsRepository:
     ) -> tuple[list[asyncpg.Record], int]:
         conditions: list[str] = [
             "e.event_date >= (NOW() AT TIME ZONE 'Asia/Bangkok')::date",
-            """
-            (
-                e.event_date > (NOW() AT TIME ZONE 'Asia/Bangkok')::date
-                OR NULLIF(e.event_time, '') IS NULL
-                OR CASE
-                    WHEN e.event_time ~ '^[0-2][0-9]:[0-5][0-9]' THEN
-                        CASE WHEN e.category ILIKE 'party'
-                             THEN (e.event_date + LEFT(e.event_time, 5)::time) + interval '3 hours' >= NOW() AT TIME ZONE 'Asia/Bangkok'
-                             ELSE (e.event_date + LEFT(e.event_time, 5)::time) >= NOW() AT TIME ZONE 'Asia/Bangkok'
-                        END
-                    ELSE TRUE
-                END
-            )
-            """,
+            _PUBLIC_EVENT_FILTER,
+            _UPCOMING_TIME_FILTER,
         ]
         params: list[Any] = []
 
@@ -100,9 +166,9 @@ class EventsRepository:
                 COUNT(*) OVER() AS total_count,
                 {_EVENT_PROJECTION}
             FROM events e
-            LEFT JOIN discovery_venues v ON e.venue_id = v.id
+            {_EVENT_JOINS}
             {where}
-            ORDER BY e.event_date ASC, e.event_time ASC NULLS LAST,
+            ORDER BY e.event_date ASC, e.start_time ASC NULLS LAST,
                      e.filter_score DESC NULLS LAST
             LIMIT {limit_ph} OFFSET {offset_ph}
         """
@@ -115,8 +181,8 @@ class EventsRepository:
         query = f"""
             SELECT {_EVENT_PROJECTION}
             FROM events e
-            LEFT JOIN discovery_venues v ON e.venue_id = v.id
-            WHERE e.id = $1
+            {_EVENT_JOINS}
+            WHERE e.id = $1 AND {_PUBLIC_EVENT_FILTER}
         """
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(query, event_id)
@@ -134,13 +200,28 @@ class EventsRepository:
         update_fields: list[str] = []
         params: list[Any] = []
         idx = 1
+        payload_data = payload.model_dump(exclude_unset=True)
+        faqs = payload_data.pop("faqs", None)
 
-        for field, value in payload.model_dump(exclude_unset=True).items():
-            if value is None and field != "recurrence_type":
+        for field, value in payload_data.items():
+            if value is None:
                 continue
-            if field in ("title", "summary", "description"):
+            if field in (
+                "title",
+                "summary",
+                "description",
+                "sharing_description",
+                "requirements",
+                "keywords",
+                "demographic_filters",
+            ):
                 update_fields.append(
                     f"{field} = COALESCE({field}, '{{}}') || ${idx}::jsonb"
+                )
+                params.append(json.dumps(value, ensure_ascii=False))
+            elif field == "ai_addons":
+                update_fields.append(
+                    f"{field} = COALESCE({field}, '[]'::jsonb) || ${idx}::jsonb"
                 )
                 params.append(json.dumps(value, ensure_ascii=False))
             elif field == "event_date":
@@ -151,22 +232,50 @@ class EventsRepository:
                 params.append(value)
             idx += 1
 
-        if not update_fields:
+        if not update_fields and faqs is None:
             return False
 
-        params.append(event_id)
-        query = f"""
-            UPDATE events
-            SET {', '.join(update_fields)}
-            WHERE id = ${idx}
-        """
         async with self.pool.acquire() as conn:
-            await conn.execute(query, *params)
+            async with conn.transaction():
+                if update_fields:
+                    params.append(event_id)
+                    query = f"""
+                        UPDATE events
+                        SET {', '.join(update_fields)}
+                        WHERE id = ${idx}
+                    """
+                    await conn.execute(query, *params)
+                if faqs is not None:
+                    await conn.execute("DELETE FROM event_faqs WHERE event_id = $1", event_id)
+                    for sort_order, faq in enumerate(faqs):
+                        question = faq.get("question") if isinstance(faq, dict) else None
+                        answer = faq.get("answer") if isinstance(faq, dict) else None
+                        if not question or not answer:
+                            continue
+                        await conn.execute(
+                            """
+                            INSERT INTO event_faqs (event_id, question, answer, sort_order)
+                            VALUES ($1, $2::jsonb, $3::jsonb, $4)
+                            """,
+                            event_id,
+                            json.dumps(question, ensure_ascii=False),
+                            json.dumps(answer, ensure_ascii=False),
+                            sort_order,
+                        )
         return True
 
     async def delete_with_dependencies(self, event_id: int) -> None:
         async with self.pool.acquire() as conn:
             async with conn.transaction():
+                await conn.execute(
+                    """
+                    INSERT INTO deleted_event_backups (reason, event_id, row_data)
+                    SELECT 'phangan_api_delete', e.id, to_jsonb(e)
+                    FROM events e
+                    WHERE e.id = $1
+                    """,
+                    event_id,
+                )
                 await conn.execute(
                     "DELETE FROM user_swipes WHERE event_id = $1", event_id
                 )
@@ -190,11 +299,28 @@ class EventsRepository:
 
     async def set_image_path(self, event_id: int, image_path: str) -> None:
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE events SET image_path = $1 WHERE id = $2",
-                image_path,
-                event_id,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE events SET image_path = $1 WHERE id = $2",
+                    image_path,
+                    event_id,
+                )
+                await conn.execute(
+                    "UPDATE event_media SET is_cover = false WHERE event_id = $1",
+                    event_id,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO event_media (event_id, media_type, storage_key, sort_order, is_cover, metadata)
+                    VALUES ($1, 'image', $2, 0, true, '{"source":"phangan_api_upload"}'::jsonb)
+                    ON CONFLICT (event_id, storage_key)
+                    DO UPDATE SET is_cover = true,
+                                  sort_order = 0,
+                                  updated_at = timezone('utc', now())
+                    """,
+                    event_id,
+                    image_path,
+                )
 
     async def get_viewer_gender(self, user_id: int) -> str | None:
         async with self.pool.acquire() as conn:

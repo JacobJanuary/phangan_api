@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from features.events.builders import (
+    build_event,
     date_info,
     event_type,
     fomo_hook,
@@ -89,3 +90,80 @@ def test_fomo_hook_free() -> None:
 def test_fomo_hook_high_demand() -> None:
     assert fomo_hook(100, 90, "en") == "High demand"
     assert fomo_hook(100, 50, "en") is None
+
+
+def test_build_event_uses_typed_time_and_media_table_contract() -> None:
+    row = {
+        "id": 42,
+        "public_id": "7ff6d57f-8a4f-4c25-9c05-2fb7c5d17a21",
+        "slug": "sample-event-42",
+        "event_date": date(2026, 5, 14),
+        "event_time": "18:30",
+        "start_time": "18:30",
+        "end_time": "20:00",
+        "ends_next_day": False,
+        "title": {"en": "Sample Event", "ru": "Событие"},
+        "summary": {"en": "Short summary", "ru": "Коротко"},
+        "description": {"en": "Full description", "ru": "Описание"},
+        "sharing_description": {"en": "Share me", "ru": "Поделиться"},
+        "requirements": {"en": "Bring water", "ru": "Вода"},
+        "keywords": {"en": ["music"], "ru": ["музыка"]},
+        "demographic_filters": {"is18Plus": True, "menOnly": False, "womenOnly": False, "noKids": False},
+        "ai_addons": ["bring_reminder"],
+        "capacity": 30,
+        "metadata_status": "complete",
+        "public_status": "published",
+        "timezone": "Asia/Bangkok",
+        "event_type": "classTrainingOrWorkshop",
+        "event_category": "music",
+        "event_sub_category": "instrumental-lesson",
+        "category": "workshop",
+        "location_name": "Secret Location",
+        "venue_name": None,
+        "venue_lat": None,
+        "venue_lng": None,
+        "venue_google_maps_url": "https://maps.example/venue",
+        "price_thb": 0,
+        "currency_code": "THB",
+        "filter_score": 77,
+        "image_path": "events/sample.webp",
+        "media": [
+            {
+                "id": 1,
+                "type": "image",
+                "storage_key": "events/sample.webp",
+                "sort_order": 0,
+                "is_cover": True,
+                "metadata": {},
+            }
+        ],
+        "faqs": [
+            {
+                "id": 1,
+                "question": {"en": "What to bring?"},
+                "answer": {"en": "Water."},
+                "sort_order": 0,
+            }
+        ],
+        "source_chat_title": "chat",
+        "sender_id": 123,
+        "recurrence_type": None,
+    }
+
+    event = build_event(
+        row,
+        lang="en",
+        today=date(2026, 5, 13),
+        tomorrow=date(2026, 5, 14),
+        now_bkk=datetime(2026, 5, 13, 12, 0),
+        media_base_url="https://api.example/media",
+    )
+
+    assert event["event_time"] == "18:30"
+    assert event["start_time"] == "18:30"
+    assert event["imageUrl"] == "https://api.example/media/events/sample.webp"
+    assert event["media"][0]["url"] == "https://api.example/media/events/sample.webp"
+    assert event["google_maps_url"] == "https://maps.example/venue"
+    assert event["sharing_description"] == "Share me"
+    assert event["keywords"]["en"] == ["music"]
+    assert event["faqs"][0]["answer"]["en"] == "Water."

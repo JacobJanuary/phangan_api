@@ -11,6 +11,8 @@ from typing import Any
 
 import asyncpg
 
+from shared.media.urls import MediaUrlBuilder
+
 # Categories that map to the visual `party` bucket (loud / dance-driven).
 # Everything else — yoga, wellness, workshop, sport, market, etc — falls into
 # `chill`. Source data lives in the `events.category` column populated by the
@@ -23,6 +25,38 @@ PARTY_CATEGORIES: frozenset[str] = frozenset(
 # Backwards-compat alias — kept so external scripts that imported the symbol
 # don't break. New code should use PARTY_CATEGORIES.
 CHILL_CATEGORIES: frozenset[str] = frozenset()
+
+# Map raw DB category → one of the 6 UI filter buckets used by the frontend.
+# Unmapped / unknown categories fall back to "Chill".
+UI_CATEGORY_MAP: dict[str, str] = {
+    # Sport
+    "muay_thai": "Sport",
+    "fitness": "Sport",
+    "pilates": "Sport",
+    "dance": "Sport",
+    # Chill
+    "yoga": "Chill",
+    "wellness": "Chill",
+    "breathwork": "Chill",
+    "meditation": "Chill",
+    "sound_healing": "Chill",
+    "circle": "Chill",
+    "tantra": "Chill",
+    "sound_journey": "Chill",
+    "tea": "Chill",
+    # Education / Development
+    "workshop": "Education",
+    "yoga_teacher_training": "Education",
+    "women": "Education",
+    # Party
+    "party": "Party",
+    "concert": "Party",
+    "ecstatic_dance": "Party",
+    # Business / Networking
+    "discussion": "Business",
+    "event": "Business",
+    "market": "Business",
+}
 
 TYPE_COLOR: dict[str, str] = {"party": "#ff007f", "chill": "#00f3ff"}
 
@@ -66,6 +100,29 @@ def parse_jsonb_dict(raw: Any) -> dict[str, str]:
             return parsed
         return {"en": str(parsed) if parsed else "", "ru": str(parsed) if parsed else ""}
     return {"en": str(raw) if raw else "", "ru": str(raw) if raw else ""}
+
+
+def parse_jsonb_list(raw: Any) -> list[Any]:
+    """Coerce a JSONB array field into a list."""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def row_get(row: asyncpg.Record | dict[str, Any], key: str, default: Any = None) -> Any:
+    """Read from asyncpg.Record/dict without assuming every projection has every key."""
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return default
 
 
 def date_info(
@@ -129,42 +186,82 @@ def build_event(
     media_base_url: str,
 ) -> dict[str, Any]:
     """Build the public event dict that the frontend expects."""
-    ev_date = row["event_date"]
-    ev_time = row["event_time"]
-    category = row["category"] or ""
-    price_thb = row["price_thb"]
-    filter_score = row["filter_score"] if "filter_score" in row else None
-    image_path = row["image_path"]
+    ev_date = row_get(row, "event_date")
+    ev_time = row_get(row, "event_time")
+    category = row_get(row, "category") or ""
+    price_thb = row_get(row, "price_thb")
+    filter_score = row_get(row, "filter_score")
+    image_path = row_get(row, "image_path")
+    media_builder = MediaUrlBuilder(media_base_url)
+    media = []
+    for item in parse_jsonb_list(row_get(row, "media")):
+        if not isinstance(item, dict):
+            continue
+        storage_key = item.get("storage_key")
+        media.append(
+            {
+                "id": item.get("id"),
+                "type": item.get("type") or item.get("media_type") or "image",
+                "storage_key": storage_key,
+                "url": media_builder.build(storage_key),
+                "source_url": item.get("source_url"),
+                "sort_order": item.get("sort_order", 0),
+                "is_cover": bool(item.get("is_cover")),
+                "metadata": item.get("metadata") or {},
+            }
+        )
 
     etype = event_type(category)
+    ui_cat = UI_CATEGORY_MAP.get(category.lower(), "Chill") if category else "Chill"
     di_label, di_cat = date_info(ev_date, lang, today, tomorrow)
-    location = row["location_name"] or row["venue_name"] or ""
-    raw_summary = resolve_text(row["summary"], lang)
+    location = row_get(row, "location_name") or row_get(row, "venue_name") or ""
+    raw_summary = resolve_text(row_get(row, "summary"), lang)
 
     return {
-        "id": str(row["id"]),
+        "id": str(row_get(row, "id")),
+        "public_id": str(row_get(row, "public_id")) if row_get(row, "public_id") else None,
+        "slug": row_get(row, "slug"),
         "event_date": ev_date.isoformat() if ev_date else None,
-        "title": resolve_text(row["title"], lang),
+        "title": resolve_text(row_get(row, "title"), lang),
         "summary": raw_summary[:120] if raw_summary else "",
-        "description": resolve_text(row["description"], lang),
+        "description": resolve_text(row_get(row, "description"), lang),
+        "sharing_description": resolve_text(row_get(row, "sharing_description"), lang),
+        "requirements": resolve_text(row_get(row, "requirements"), lang),
+        "keywords": parse_jsonb_dict(row_get(row, "keywords")),
+        "demographic_filters": parse_jsonb_dict(row_get(row, "demographic_filters")),
+        "ai_addons": parse_jsonb_list(row_get(row, "ai_addons")),
+        "capacity": row_get(row, "capacity"),
+        "metadata_status": row_get(row, "metadata_status"),
+        "public_status": row_get(row, "public_status"),
+        "timezone": row_get(row, "timezone") or "Asia/Bangkok",
+        "event_type": row_get(row, "event_type"),
+        "event_category": row_get(row, "event_category"),
+        "event_sub_category": row_get(row, "event_sub_category"),
         "location": location,
-        "lat": row["venue_lat"],
-        "lng": row["venue_lng"],
-        "google_maps_url": row["venue_google_maps_url"],
+        "lat": row_get(row, "venue_lat"),
+        "lng": row_get(row, "venue_lng"),
+        "google_maps_url": row_get(row, "venue_google_maps_url"),
         "dateInfo": di_label,
         "dateCategory": di_cat,
         "event_time": ev_time[:5] if ev_time else "",
+        "start_time": row_get(row, "start_time") or (ev_time[:5] if ev_time else ""),
+        "end_time": row_get(row, "end_time"),
+        "ends_next_day": bool(row_get(row, "ends_next_day")),
         "timeInfo": ev_time[:5] if ev_time else "TBD",
         "isLive": is_live(ev_date, ev_time, today, now_bkk),
         "type": etype,
         "category": category,
+        "ui_category": ui_cat,
         "color": TYPE_COLOR.get(etype, "#00f3ff"),
         "fomoHook": fomo_hook(price_thb, filter_score, lang),
-        "recurrence_type": row["recurrence_type"],
+        "recurrence_type": row_get(row, "recurrence_type"),
         "price_thb": price_thb if price_thb is not None else 0,
-        "imageUrl": f"{media_base_url}/{image_path}" if image_path else None,
-        "source_chat_title": row["source_chat_title"],
-        "sender_id": str(row["sender_id"]) if row["sender_id"] else None,
+        "currency_code": row_get(row, "currency_code") or "THB",
+        "media": media,
+        "faqs": parse_jsonb_list(row_get(row, "faqs")),
+        "imageUrl": media_builder.build(image_path),
+        "source_chat_title": row_get(row, "source_chat_title"),
+        "sender_id": str(row_get(row, "sender_id")) if row_get(row, "sender_id") else None,
         "rsvps": (filter_score or 0) * 2 if filter_score else None,
         "attendeeCount": 0,
         "facepileUrls": [],

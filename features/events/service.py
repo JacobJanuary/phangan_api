@@ -21,6 +21,8 @@ from core.exceptions import (
 from features.events.builders import build_event, parse_jsonb_dict
 from features.events.repository import EventsRepository
 from features.events.schemas import EventUpdate
+from features.media.security import resolve_safe_media_path
+from shared.media.urls import MediaUrlBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -181,9 +183,11 @@ class EventsService:
 
         category = (meta["category"] or "other").lower()
         filename = f"event_{category}_{os.urandom(4).hex()}.webp"
+        storage_key = f"events/{filename}"
         media_dir = Path(self.settings.MEDIA_DIR)
-        media_dir.mkdir(parents=True, exist_ok=True)
-        save_path = media_dir / filename
+        event_media_dir = media_dir / "events"
+        event_media_dir.mkdir(parents=True, exist_ok=True)
+        save_path = event_media_dir / filename
 
         image.save(str(save_path), "WEBP", quality=85, method=6)
         logger.info(
@@ -193,7 +197,10 @@ class EventsService:
 
         old_path = meta["image_path"]
         if old_path:
-            old_file = media_dir / old_path
+            try:
+                old_file = resolve_safe_media_path(old_path, media_dir).absolute
+            except Exception:
+                old_file = media_dir / old_path
             if old_file.is_file():
                 try:
                     old_file.unlink()
@@ -203,11 +210,11 @@ class EventsService:
                         extra={"path": old_path, "error": str(exc)},
                     )
 
-        await repo.set_image_path(event_id, filename)
+        await repo.set_image_path(event_id, storage_key)
         return {
             "status": "ok",
             "message": "Image uploaded successfully",
-            "imageUrl": f"{self.settings.PUBLIC_MEDIA_BASE_URL}/{filename}",
+            "imageUrl": MediaUrlBuilder(self.settings.PUBLIC_MEDIA_BASE_URL).build(storage_key),
         }
 
     # ── Internal helpers ─────────────────────────────────────────────
