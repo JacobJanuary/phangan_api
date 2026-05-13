@@ -95,21 +95,50 @@ def test_fomo_hook_high_demand() -> None:
 def test_build_event_uses_safe_media_builder() -> None:
     row = {
         "id": 1,
+        "public_id": "7ff6d57f-8a4f-4c25-9c05-2fb7c5d17a21",
+        "slug": "yoga-1",
         "event_date": date(2025, 1, 15),
         "title": {"en": "Yoga", "ru": "Йога"},
         "summary": {"en": "Short", "ru": "Коротко"},
         "description": {"en": "Desc", "ru": "Описание"},
+        "sharing_description": {"en": "Share", "ru": "Шер"},
+        "requirements": {"en": "Bring water", "ru": "Вода"},
+        "keywords": {"en": ["yoga"], "ru": ["йога"]},
+        "demographic_filters": {"is18Plus": False, "menOnly": False, "womenOnly": False, "noKids": False},
+        "ai_addons": ["bring_reminder"],
+        "capacity": 20,
+        "metadata_status": "complete",
+        "public_status": "published",
+        "timezone": "Asia/Bangkok",
+        "event_type": "classTrainingOrWorkshop",
+        "event_category": "healthAndWellness",
+        "event_sub_category": "yoga",
         "location_name": "Studio",
         "venue_name": "Studio",
         "venue_lat": 9.7,
         "venue_lng": 100.0,
         "venue_google_maps_url": "https://maps.example/venue",
         "event_time": "18:00",
+        "start_time": "18:00",
+        "end_time": None,
+        "ends_next_day": False,
         "category": "yoga",
         "price_thb": 0,
+        "currency_code": "THB",
         "filter_score": 3,
         "recurrence_type": None,
         "image_path": "events/tlg poster.webp",
+        "media": [
+            {
+                "id": 1,
+                "type": "image",
+                "storage_key": "events/tlg poster.webp",
+                "sort_order": 0,
+                "is_cover": True,
+                "metadata": {},
+            }
+        ],
+        "faqs": [{"question": {"en": "What?"}, "answer": {"en": "Water."}}],
         "source_chat_title": "Chat",
         "sender_id": 123,
     }
@@ -125,3 +154,9 @@ def test_build_event_uses_safe_media_builder() -> None:
 
     assert out["google_maps_url"] == "https://maps.example/venue"
     assert out["imageUrl"] == "https://cdn.example.com/api/media/events/tlg%20poster.webp"
+    assert out["public_id"] == "7ff6d57f-8a4f-4c25-9c05-2fb7c5d17a21"
+    assert out["slug"] == "yoga-1"
+    assert out["sharing_description"] == "Share"
+    assert out["keywords"]["en"] == ["yoga"]
+    assert out["media"][0]["url"] == "https://cdn.example.com/api/media/events/tlg%20poster.webp"
+    assert out["faqs"][0]["answer"]["en"] == "Water."

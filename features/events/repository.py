@@ -26,7 +26,8 @@ _DISPLAY_TIME_EXPR = """
 """
 
 _PUBLIC_EVENT_FILTER = """
-    COALESCE(e.dedup_status, 'unique') = 'unique'
+    e.public_status = 'published'
+    AND COALESCE(e.dedup_status, 'unique') = 'unique'
     AND COALESCE(e.enrichment_status, 'complete') <> 'needs_repair'
     AND e.start_time IS NOT NULL
 """
@@ -34,10 +35,24 @@ _PUBLIC_EVENT_FILTER = """
 # Common SELECT projection for an event with its venue.
 _EVENT_PROJECTION = f"""
     e.id,
+    e.public_id,
+    e.slug,
     e.title,
     e.summary,
     e.description,
+    e.sharing_description,
+    e.requirements,
+    e.keywords,
+    e.demographic_filters,
+    e.ai_addons,
+    e.capacity,
+    e.metadata_status,
+    e.public_status,
+    e.timezone,
     e.category,
+    e.event_type,
+    e.event_category,
+    e.event_sub_category,
     e.event_date,
     {_DISPLAY_TIME_EXPR} AS event_time,
     e.start_time,
@@ -45,8 +60,11 @@ _EVENT_PROJECTION = f"""
     e.ends_next_day,
     e.location_name,
     e.price_thb,
+    e.currency_code,
     e.filter_score,
-    e.image_path,
+    COALESCE(cover.storage_key, e.image_path) AS image_path,
+    COALESCE(media.media, '[]'::jsonb) AS media,
+    COALESCE(faqs.faqs, '[]'::jsonb) AS faqs,
     e.source_chat_title,
     e.sender_id,
     NULL::text AS recurrence_type,
@@ -54,6 +72,46 @@ _EVENT_PROJECTION = f"""
     v.lat  AS venue_lat,
     v.lng  AS venue_lng,
     v.google_maps_url AS venue_google_maps_url
+"""
+
+_EVENT_JOINS = """
+    LEFT JOIN discovery_venues v ON e.venue_id = v.id
+    LEFT JOIN LATERAL (
+        SELECT em.storage_key
+        FROM event_media em
+        WHERE em.event_id = e.id
+        ORDER BY em.is_cover DESC, em.sort_order ASC, em.id ASC
+        LIMIT 1
+    ) cover ON true
+    LEFT JOIN LATERAL (
+        SELECT jsonb_agg(
+            jsonb_build_object(
+                'id', em.id,
+                'type', em.media_type,
+                'storage_key', em.storage_key,
+                'source_url', em.source_url,
+                'sort_order', em.sort_order,
+                'is_cover', em.is_cover,
+                'metadata', em.metadata
+            )
+            ORDER BY em.is_cover DESC, em.sort_order ASC, em.id ASC
+        ) AS media
+        FROM event_media em
+        WHERE em.event_id = e.id
+    ) media ON true
+    LEFT JOIN LATERAL (
+        SELECT jsonb_agg(
+            jsonb_build_object(
+                'id', f.id,
+                'question', f.question,
+                'answer', f.answer,
+                'sort_order', f.sort_order
+            )
+            ORDER BY f.sort_order ASC, f.id ASC
+        ) AS faqs
+        FROM event_faqs f
+        WHERE f.event_id = e.id
+    ) faqs ON true
 """
 
 
@@ -146,7 +204,7 @@ class EventsRepository:
                 COUNT(*) OVER() AS total_count,
                 {_EVENT_PROJECTION}
             FROM events e
-            LEFT JOIN discovery_venues v ON e.venue_id = v.id
+            {_EVENT_JOINS}
             {where}
             ORDER BY e.event_date ASC, ({_START_TIME_EXPR}) ASC NULLS LAST,
                      e.filter_score DESC NULLS LAST
@@ -161,7 +219,7 @@ class EventsRepository:
         query = f"""
             SELECT {_EVENT_PROJECTION}
             FROM events e
-            LEFT JOIN discovery_venues v ON e.venue_id = v.id
+            {_EVENT_JOINS}
             WHERE e.id = $1
               AND {_PUBLIC_EVENT_FILTER}
         """
@@ -181,49 +239,71 @@ class EventsRepository:
         update_fields: list[str] = []
         params: list[Any] = []
         idx = 1
+        payload_data = payload.model_dump(exclude_unset=True)
+        faqs = payload_data.pop("faqs", None)
 
-        for field, value in payload.model_dump(exclude_unset=True).items():
-            if value is None and field != "recurrence_type":
+        for field, value in payload_data.items():
+            if value is None:
                 continue
-            if field in ("title", "summary", "description"):
+            if field in (
+                "title",
+                "summary",
+                "description",
+                "sharing_description",
+                "requirements",
+                "keywords",
+                "demographic_filters",
+            ):
                 update_fields.append(
                     f"{field} = COALESCE({field}, '{{}}') || ${idx}::jsonb"
+                )
+                params.append(json.dumps(value, ensure_ascii=False))
+            elif field == "ai_addons":
+                update_fields.append(
+                    f"{field} = COALESCE({field}, '[]'::jsonb) || ${idx}::jsonb"
                 )
                 params.append(json.dumps(value, ensure_ascii=False))
             elif field == "event_date":
                 update_fields.append(f"{field} = ${idx}")
                 params.append(date.fromisoformat(value))
-            elif field == "event_time":
-                start, end, ends_next_day = _parse_time_range(value)
-                update_fields.append(
-                    f"start_time = ${idx}, end_time = ${idx + 1}, "
-                    f"ends_next_day = ${idx + 2}"
-                )
-                params.extend([start, end, ends_next_day])
-                idx += 3
-                continue
-            elif field == "google_maps_url":
-                # Deprecated denormalized field. Canonical maps URL belongs to discovery_venues.
-                continue
-            elif field == "recurrence_type":
-                # Recurrence is owned by parser-side copy logic; this API does not write it.
-                continue
+            elif field in ("start_time", "end_time"):
+                update_fields.append(f"{field} = ${idx}")
+                params.append(_parse_time_token(value))
             else:
                 update_fields.append(f"{field} = ${idx}")
                 params.append(value)
             idx += 1
 
-        if not update_fields:
+        if not update_fields and faqs is None:
             return False
 
-        params.append(event_id)
-        query = f"""
-            UPDATE events
-            SET {', '.join(update_fields)}
-            WHERE id = ${idx}
-        """
         async with self.pool.acquire() as conn:
-            await conn.execute(query, *params)
+            async with conn.transaction():
+                if update_fields:
+                    params.append(event_id)
+                    query = f"""
+                        UPDATE events
+                        SET {', '.join(update_fields)}
+                        WHERE id = ${idx}
+                    """
+                    await conn.execute(query, *params)
+                if faqs is not None:
+                    await conn.execute("DELETE FROM event_faqs WHERE event_id = $1", event_id)
+                    for sort_order, faq in enumerate(faqs):
+                        question = faq.get("question") if isinstance(faq, dict) else None
+                        answer = faq.get("answer") if isinstance(faq, dict) else None
+                        if not question or not answer:
+                            continue
+                        await conn.execute(
+                            """
+                            INSERT INTO event_faqs (event_id, question, answer, sort_order)
+                            VALUES ($1, $2::jsonb, $3::jsonb, $4)
+                            """,
+                            event_id,
+                            json.dumps(question, ensure_ascii=False),
+                            json.dumps(answer, ensure_ascii=False),
+                            sort_order,
+                        )
         return True
 
     async def delete_with_dependencies(self, event_id: int) -> None:
@@ -264,11 +344,28 @@ class EventsRepository:
         if safe_path is None:
             return
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE events SET image_path = $1 WHERE id = $2",
-                safe_path,
-                event_id,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE events SET image_path = $1 WHERE id = $2",
+                    safe_path,
+                    event_id,
+                )
+                await conn.execute(
+                    "UPDATE event_media SET is_cover = false WHERE event_id = $1",
+                    event_id,
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO event_media (event_id, media_type, storage_key, sort_order, is_cover, metadata)
+                    VALUES ($1, 'image', $2, 0, true, '{"source":"phangan_api_upload"}'::jsonb)
+                    ON CONFLICT (event_id, storage_key)
+                    DO UPDATE SET is_cover = true,
+                                  sort_order = 0,
+                                  updated_at = timezone('utc', now())
+                    """,
+                    event_id,
+                    safe_path,
+                )
 
     async def get_viewer_gender(self, user_id: int) -> str | None:
         async with self.pool.acquire() as conn:

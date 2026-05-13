@@ -32,9 +32,19 @@ _UPCOMING_TIME_FILTER = f"""
 """
 
 _EVENT_COLUMNS = f"""
-    e.id, e.title, e.summary, e.description, e.category,
-    e.event_date, {_DISPLAY_TIME_EXPR} AS event_time, e.location_name, e.price_thb,
-    e.filter_score, e.image_path, e.source_chat_title, e.sender_id,
+    e.id, e.public_id, e.slug, e.title, e.summary, e.description,
+    e.sharing_description, e.requirements, e.keywords, e.demographic_filters,
+    e.ai_addons, e.capacity, e.metadata_status, e.public_status, e.timezone,
+    e.category, e.event_type, e.event_category, e.event_sub_category,
+    e.event_date, {_DISPLAY_TIME_EXPR} AS event_time,
+    to_char(e.start_time, 'HH24:MI') AS start_time,
+    to_char(e.end_time, 'HH24:MI') AS end_time,
+    e.ends_next_day,
+    e.location_name, e.price_thb, e.currency_code,
+    e.filter_score, COALESCE(cover.storage_key, e.image_path) AS image_path,
+    COALESCE(media.media, '[]'::jsonb) AS media,
+    COALESCE(faqs.faqs, '[]'::jsonb) AS faqs,
+    e.source_chat_title, e.sender_id,
     NULL::text AS recurrence_type,
     v.name AS venue_name, v.lat AS venue_lat, v.lng AS venue_lng,
     v.google_maps_url AS venue_google_maps_url,
@@ -45,11 +55,48 @@ _FROM_JOIN = """
     FROM user_swipes s
     JOIN events e ON e.id = s.event_id
     LEFT JOIN discovery_venues v ON e.venue_id = v.id
+    LEFT JOIN LATERAL (
+        SELECT em.storage_key
+        FROM event_media em
+        WHERE em.event_id = e.id
+        ORDER BY em.is_cover DESC, em.sort_order ASC, em.id ASC
+        LIMIT 1
+    ) cover ON true
+    LEFT JOIN LATERAL (
+        SELECT jsonb_agg(
+            jsonb_build_object(
+                'id', em.id,
+                'type', em.media_type,
+                'storage_key', em.storage_key,
+                'source_url', em.source_url,
+                'sort_order', em.sort_order,
+                'is_cover', em.is_cover,
+                'metadata', em.metadata
+            )
+            ORDER BY em.is_cover DESC, em.sort_order ASC, em.id ASC
+        ) AS media
+        FROM event_media em
+        WHERE em.event_id = e.id
+    ) media ON true
+    LEFT JOIN LATERAL (
+        SELECT jsonb_agg(
+            jsonb_build_object(
+                'id', f.id,
+                'question', f.question,
+                'answer', f.answer,
+                'sort_order', f.sort_order
+            )
+            ORDER BY f.sort_order ASC, f.id ASC
+        ) AS faqs
+        FROM event_faqs f
+        WHERE f.event_id = e.id
+    ) faqs ON true
 """
 
 _BASE_WHERE = """
     WHERE s.user_id = $1
       AND s.direction = 'right'
+      AND e.public_status = 'published'
       AND COALESCE(e.dedup_status, 'unique') = 'unique'
       AND COALESCE(e.enrichment_status, 'complete') <> 'needs_repair'
       AND e.start_time IS NOT NULL

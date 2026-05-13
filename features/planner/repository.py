@@ -49,6 +49,7 @@ class PlannerRepository:
                 WHERE s.user_id = $1
                   AND s.direction = 'right'
                   AND e.event_date = $2
+                  AND e.public_status = 'published'
                   AND COALESCE(e.dedup_status, 'unique') = 'unique'
                   AND COALESCE(e.enrichment_status, 'complete') <> 'needs_repair'
                   AND e.start_time IS NOT NULL
