@@ -192,7 +192,7 @@ class EventsService:
         image.save(str(save_path), "WEBP", quality=85, method=6)
         logger.info(
             "Saved event image",
-            extra={"event_id": event_id, "filename": filename},
+            extra={"event_id": event_id, "image_filename": filename},
         )
 
         old_path = meta["image_path"]

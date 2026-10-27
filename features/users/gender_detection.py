@@ -108,7 +108,7 @@ async def detect_gender_via_ai(
     except Exception as exc:  # cascade exhausted
         logger.error(
             "Gender detection AI cascade failed — defaulting to male",
-            extra={"name": first_name, "error": str(exc)},
+            extra={"first_name": first_name, "error": str(exc)},
         )
         return "male"
     return "female" if "female" in answer else "male"
@@ -124,24 +124,24 @@ async def detect_gender(
     clean = _first_word(first_name) if first_name.strip() else first_name
 
     if (result := lookup_dictionary(clean)) is not None:
-        logger.info("Gender via dictionary", extra={"name": first_name, "gender": result})
+        logger.info("Gender via dictionary", extra={"first_name": first_name, "gender": result})
         return result
 
     if not has_letters(first_name):
-        logger.info("Gender unknown (no letters)", extra={"name": first_name})
+        logger.info("Gender unknown (no letters)", extra={"first_name": first_name})
         return "unknown"
 
     if (result := guess_by_morphology(clean)) is not None:
-        logger.info("Gender via morphology", extra={"name": first_name, "gender": result})
+        logger.info("Gender via morphology", extra={"first_name": first_name, "gender": result})
         return result
 
     if cascade is None:
         logger.warning(
             "Gender cascade not configured — defaulting to male",
-            extra={"name": first_name},
+            extra={"first_name": first_name},
         )
         return "male"
 
     result = await detect_gender_via_ai(first_name, language=language, cascade=cascade)
-    logger.info("Gender via AI", extra={"name": first_name, "gender": result})
+    logger.info("Gender via AI", extra={"first_name": first_name, "gender": result})
     return result

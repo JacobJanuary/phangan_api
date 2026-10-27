@@ -67,3 +67,15 @@ def test_name_in_ru_dict() -> None:
     assert name_in_ru_dict("Анна")
     assert name_in_ru_dict("Polina")
     assert not name_in_ru_dict("John")
+
+
+def test_detect_gender_logs_without_reserved_logrecord_keys(caplog):
+    """`extra={"name": ...}` raised KeyError inside logging and broke detection."""
+    import asyncio
+    import logging
+
+    from features.users.gender_detection import detect_gender
+
+    caplog.set_level(logging.INFO)
+    assert asyncio.run(detect_gender("Anna")) in ("female", "male", "unknown")
+    assert asyncio.run(detect_gender("123")) == "unknown"
