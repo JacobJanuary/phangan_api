@@ -119,37 +119,23 @@ it with Prometheus or replace `core/metrics.py` with `prometheus_client`.
 
 ## Deployment (production)
 
-The prod box (Ubuntu) runs `phangan-api.service` (systemd) on port 62537.
-The directory `/home/ubuntu/Phangan/phangan_api` is **not** a git repo —
-deploys are by `rsync`. Standard flow:
+Prod is the `phangan-api` Docker container on fc-api, built by
+`/srv/phangan/api/compose.yml` from `/srv/phangan/api/current`, a symlink
+into `releases/<UTC timestamp>` (env in `/srv/phangan/api/env/prod.env`,
+media mounted from `/srv/phangan/media`). A release is `git archive` of a
+commit, with the hash in `REVISION` — commit first, then:
 
 ```bash
-# 1. Backup
-ssh -p 42537 ubuntu@<host> \
-  "cd /home/ubuntu/Phangan && tar --exclude='phangan_api/venv' \
-     --exclude='phangan_api/media' \
-     -czf phangan_api_backup_$(date +%Y%m%d_%H%M%S).tar.gz phangan_api/"
+scripts/deploy_fc_api.sh          # HEAD; or a ref: scripts/deploy_fc_api.sh 1a2b3c4
+```
 
-# 2. Sync (NB: anchor /media/ to top level — do NOT exclude '*/media/')
-rsync -avz --delete \
-  --exclude='__pycache__/' --exclude='.git/' --exclude='.pytest_cache/' \
-  --exclude='/venv/' --exclude='/media/' --exclude='.env' \
-  -e 'ssh -p 42537' \
-  features/ shared/ core/ main.py scripts/ \
-  ubuntu@<host>:/home/ubuntu/Phangan/phangan_api/
+The script uploads the release, switches `current`, rebuilds and waits for
+the container healthcheck. It prints the previous release; to roll back,
+point `current` at it and rebuild:
 
-# 3. Smoke-test on prod
-ssh -p 42537 ubuntu@<host> \
-  "cd /home/ubuntu/Phangan/phangan_api && \
-   venv/bin/python -c 'from main import app; print(len(app.routes))' && \
-   venv/bin/python -m pytest tests/ -q"
-
-# 4. Restart
-ssh -p 42537 ubuntu@<host> "sudo systemctl restart phangan-api && \
-  systemctl is-active phangan-api"
-
-# 5. Verify
-curl https://api.fastpump.fun/health
+```bash
+ssh fc-api "cd /srv/phangan/api && sudo ln -sfn releases/<previous> current \
+  && docker compose build api && sudo docker compose up -d api"
 ```
 
 ---
