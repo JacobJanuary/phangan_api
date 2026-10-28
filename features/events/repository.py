@@ -48,6 +48,10 @@ _EVENT_PROJECTION = """
     COALESCE(media.media, '[]'::jsonb) AS media,
     COALESCE(faqs.faqs, '[]'::jsonb) AS faqs,
     e.source_chat_title,
+    e.message_id,
+    (SELECT d.username FROM discovered_chats d
+      WHERE d.chat_id = e.source_chat_id AND d.username IS NOT NULL
+      LIMIT 1) AS source_chat_username,
     e.sender_id,
     NULL::text AS recurrence_type,
     v.name AS venue_name,

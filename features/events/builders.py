@@ -302,6 +302,29 @@ def duration_info(
     return _format_duration_minutes(minutes, lang)
 
 
+# Organisers who keep the place to themselves ("DM for location"); the
+# pipeline publishes such events as announced.
+SECRET_LOCATIONS = {
+    "secret", "secret location", "private", "tba", "tbd", "t.b.a.", "t.b.a",
+    "contact for location", "dm for location", "pm for location",
+}
+SECRET_LOCATION_LABEL = {
+    "ru": "Секретное место — уточняйте у организатора",
+    "en": "Secret location — ask the organiser",
+}
+
+
+def is_secret_location(name: Any) -> bool:
+    return " ".join(str(name or "").split()).lower() in SECRET_LOCATIONS
+
+
+def source_post_url(row: Any) -> str | None:
+    """Link to the Telegram post an event came from, when its chat is public."""
+    username = row_get(row, "source_chat_username")
+    message_id = row_get(row, "message_id")
+    return f"https://t.me/{username}/{message_id}" if username and message_id else None
+
+
 def time_range_info(start_time: Any, end_time: Any, fallback: str) -> str:
     start = str(start_time or "").strip()
     end = str(end_time or "").strip()
@@ -351,6 +374,9 @@ def build_event(
     ui_cat = UI_CATEGORY_MAP.get(category.lower(), "Chill") if category else "Chill"
     di_label, di_cat = date_info(ev_date, lang, today, tomorrow)
     location = row_get(row, "location_name") or row_get(row, "venue_name") or ""
+    secret_location = is_secret_location(location)
+    if secret_location:
+        location = SECRET_LOCATION_LABEL["ru" if lang == "ru" else "en"]
     raw_summary = resolve_text(row_get(row, "summary"), lang)
     venue_name = (
         row_get(row, "venue_name_ru")
@@ -398,6 +424,8 @@ def build_event(
         "event_category": row_get(row, "event_category"),
         "event_sub_category": row_get(row, "event_sub_category"),
         "location": location,
+        "is_secret_location": secret_location,
+        "source_post_url": source_post_url(row),
         "lat": row_get(row, "venue_lat"),
         "lng": row_get(row, "venue_lng"),
         "google_maps_url": row_get(row, "venue_google_maps_url"),

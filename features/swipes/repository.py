@@ -34,7 +34,11 @@ _EVENT_COLUMNS = """
     e.filter_score, COALESCE(cover.storage_key, e.image_path) AS image_path,
     COALESCE(media.media, '[]'::jsonb) AS media,
     COALESCE(faqs.faqs, '[]'::jsonb) AS faqs,
-    e.source_chat_title, e.sender_id,
+    e.source_chat_title, e.message_id,
+    (SELECT d.username FROM discovered_chats d
+      WHERE d.chat_id = e.source_chat_id AND d.username IS NOT NULL
+      LIMIT 1) AS source_chat_username,
+    e.sender_id,
     NULL::text AS recurrence_type,
     v.name AS venue_name, v.lat AS venue_lat, v.lng AS venue_lng,
     v.google_maps_url AS venue_google_maps_url,

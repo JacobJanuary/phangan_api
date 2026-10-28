@@ -222,3 +222,26 @@ def test_build_event_without_start_time_runs_all_day() -> None:
     assert en["isLive"] is False
     assert duration_info("21 days", None, None, ends_next_day=False, lang="ru") == "21 день"
     assert duration_info("6 hours/day, 4 days", None, None, ends_next_day=False, lang="ru") == "4 дня"
+
+
+def test_build_event_names_a_secret_location_and_links_the_post() -> None:
+    row = {
+        "id": 53222,
+        "event_date": date(2026, 10, 29),
+        "event_time": "14:00",
+        "start_time": "14:00",
+        "title": {"en": "Vocal Group", "ru": "Группа по вокалу"},
+        "category": "workshop",
+        "location_name": "Secret Location",
+        "message_id": 7273,
+        "source_chat_username": "devichnikiphangan",
+    }
+    kwargs = dict(today=date(2026, 10, 28), tomorrow=date(2026, 10, 29), now_bkk=datetime(2026, 10, 28, 20, 0),
+                  media_base_url="https://api.example/media")
+
+    ru = build_event(row, lang="ru", **kwargs)
+    en = build_event(dict(row, location_name="DM for location", source_chat_username=None), lang="en", **kwargs)
+
+    assert ru["location"] == "Секретное место — уточняйте у организатора" and ru["is_secret_location"] is True
+    assert ru["source_post_url"] == "https://t.me/devichnikiphangan/7273"
+    assert en["location"] == "Secret location — ask the organiser" and en["source_post_url"] is None
