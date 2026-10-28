@@ -37,7 +37,10 @@ _EVENT_PROJECTION = """
     to_char(e.start_time, 'HH24:MI') AS start_time,
     to_char(e.end_time, 'HH24:MI') AS end_time,
     e.ends_next_day,
+    e.duration,
+    e.event_languages,
     e.location_name,
+    e.venue_id,
     e.price_thb,
     e.currency_code,
     e.filter_score,
@@ -48,13 +51,24 @@ _EVENT_PROJECTION = """
     e.sender_id,
     NULL::text AS recurrence_type,
     v.name AS venue_name,
+    v.name_ru AS venue_name_ru,
     v.lat  AS venue_lat,
     v.lng  AS venue_lng,
-    v.google_maps_url AS venue_google_maps_url
+    v.google_maps_url AS venue_google_maps_url,
+    v.google_rating AS venue_rating,
+    v.google_reviews_count AS venue_reviews_count,
+    COALESCE(venue_events.events_count, 0)::int AS venue_events_count
 """
 
 _EVENT_JOINS = """
     LEFT JOIN discovery_venues v ON e.venue_id = v.id
+    LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS events_count
+        FROM events ve
+        WHERE ve.venue_id = e.venue_id
+          AND ve.public_status = 'published'
+          AND ve.dedup_status = 'unique'
+    ) venue_events ON e.venue_id IS NOT NULL
     LEFT JOIN LATERAL (
         SELECT em.storage_key
         FROM event_media em

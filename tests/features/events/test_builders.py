@@ -7,9 +7,11 @@ from datetime import date, datetime
 from features.events.builders import (
     build_event,
     date_info,
+    duration_info,
     event_type,
     fomo_hook,
     is_live,
+    normalize_event_languages,
     parse_jsonb_dict,
     resolve_text,
 )
@@ -92,6 +94,16 @@ def test_fomo_hook_high_demand() -> None:
     assert fomo_hook(100, 50, "en") is None
 
 
+def test_duration_info_prefers_duration_then_falls_back_to_time_range() -> None:
+    assert duration_info("1h30", "18:00", "19:00", ends_next_day=False, lang="ru") == "1 ч 30 мин"
+    assert duration_info(None, "23:30", "01:00", ends_next_day=True, lang="en") == "1 h 30 min"
+
+
+def test_normalize_event_languages_returns_public_codes() -> None:
+    assert normalize_event_languages(["en", "russian", "th"]) == ["EN", "RU"]
+    assert normalize_event_languages(None) is None
+
+
 def test_build_event_uses_typed_time_and_media_table_contract() -> None:
     row = {
         "id": 42,
@@ -102,6 +114,8 @@ def test_build_event_uses_typed_time_and_media_table_contract() -> None:
         "start_time": "18:30",
         "end_time": "20:00",
         "ends_next_day": False,
+        "duration": "1h30",
+        "event_languages": ["en", "ru"],
         "title": {"en": "Sample Event", "ru": "Событие"},
         "summary": {"en": "Short summary", "ru": "Коротко"},
         "description": {"en": "Full description", "ru": "Описание"},
@@ -119,10 +133,15 @@ def test_build_event_uses_typed_time_and_media_table_contract() -> None:
         "event_sub_category": "instrumental-lesson",
         "category": "workshop",
         "location_name": "Secret Location",
-        "venue_name": None,
+        "venue_id": 100,
+        "venue_name": "Venue EN",
+        "venue_name_ru": "Площадка RU",
         "venue_lat": None,
         "venue_lng": None,
         "venue_google_maps_url": "https://maps.example/venue",
+        "venue_rating": 4.9,
+        "venue_reviews_count": 34,
+        "venue_events_count": 12,
         "price_thb": 0,
         "currency_code": "THB",
         "filter_score": 77,
@@ -161,9 +180,20 @@ def test_build_event_uses_typed_time_and_media_table_contract() -> None:
 
     assert event["event_time"] == "18:30"
     assert event["start_time"] == "18:30"
+    assert event["timeRangeInfo"] == "18:30–20:00"
+    assert event["durationInfo"] == "1 h 30 min"
+    assert event["event_languages"] == ["EN", "RU"]
+    assert event["venue"] == {
+        "id": 100,
+        "name": "Venue EN",
+        "rating": 4.9,
+        "reviews_count": 34,
+        "events_count": 12,
+    }
     assert event["imageUrl"] == "https://api.example/media/events/sample.webp"
     assert event["media"][0]["url"] == "https://api.example/media/events/sample.webp"
     assert event["google_maps_url"] == "https://maps.example/venue"
     assert event["sharing_description"] == "Share me"
     assert event["keywords"]["en"] == ["music"]
     assert event["faqs"][0]["answer"]["en"] == "Water."
+

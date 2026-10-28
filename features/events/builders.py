@@ -6,6 +6,7 @@ No DB / framework / IO — just data shaping. Trivial to unit-test.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -176,6 +177,123 @@ def fomo_hook(price_thb: int | None, filter_score: int | None, lang: str) -> str
     return None
 
 
+def normalize_event_languages(raw: Any) -> list[str] | None:
+    """Return public language codes from the DB array/string, or None when unknown."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        values = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        values = list(raw)
+    else:
+        return None
+
+    normalized: list[str] = []
+    for value in values:
+        code = str(value).strip().lower()
+        if code in {"en", "eng", "english"}:
+            public = "EN"
+        elif code in {"ru", "rus", "russian", "русский"}:
+            public = "RU"
+        else:
+            continue
+        if public not in normalized:
+            normalized.append(public)
+    return normalized or None
+
+
+def _time_to_minutes(value: Any) -> int | None:
+    if value is None:
+        return None
+    if hasattr(value, "hour") and hasattr(value, "minute"):
+        return int(value.hour) * 60 + int(value.minute)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        hours, minutes = map(int, text[:5].split(":"))
+    except (TypeError, ValueError):
+        return None
+    return hours * 60 + minutes
+
+
+def _duration_to_minutes(raw: Any) -> int | None:
+    if raw is None:
+        return None
+    text = str(raw).strip().lower()
+    if not text:
+        return None
+
+    compact = re.fullmatch(r"(\d+)\s*h\s*(\d+)", text)
+    if compact:
+        return int(compact.group(1)) * 60 + int(compact.group(2))
+
+    total = 0.0
+    seen = False
+    for value, unit in re.findall(
+        r"(\d+(?:[.,]\d+)?)\s*(hours?|hrs?|h|ч|minutes?|mins?|min|m|мин)",
+        text,
+    ):
+        seen = True
+        amount = float(value.replace(",", "."))
+        if unit.startswith(("h", "ч")):
+            total += amount * 60
+        else:
+            total += amount
+
+    if seen:
+        return max(1, round(total))
+    if text.isdigit():
+        return int(text)
+    return None
+
+
+def _format_duration_minutes(minutes: int | None, lang: str) -> str | None:
+    if minutes is None or minutes <= 0:
+        return None
+    hours, mins = divmod(minutes, 60)
+    if lang == "ru":
+        parts = []
+        if hours:
+            parts.append(f"{hours} ч")
+        if mins:
+            parts.append(f"{mins} мин")
+        return " ".join(parts)
+    parts = []
+    if hours:
+        parts.append(f"{hours} h")
+    if mins:
+        parts.append(f"{mins} min")
+    return " ".join(parts)
+
+
+def duration_info(
+    raw_duration: Any,
+    start_time: Any,
+    end_time: Any,
+    *,
+    ends_next_day: bool,
+    lang: str,
+) -> str | None:
+    minutes = _duration_to_minutes(raw_duration)
+    if minutes is None:
+        start_minutes = _time_to_minutes(start_time)
+        end_minutes = _time_to_minutes(end_time)
+        if start_minutes is not None and end_minutes is not None:
+            if ends_next_day or end_minutes < start_minutes:
+                end_minutes += 24 * 60
+            minutes = end_minutes - start_minutes
+    return _format_duration_minutes(minutes, lang)
+
+
+def time_range_info(start_time: Any, end_time: Any, fallback: str) -> str:
+    start = str(start_time or "").strip()
+    end = str(end_time or "").strip()
+    if start and end:
+        return f"{start[:5]}–{end[:5]}"
+    return fallback
+
+
 def build_event(
     row: asyncpg.Record,
     *,
@@ -188,6 +306,8 @@ def build_event(
     """Build the public event dict that the frontend expects."""
     ev_date = row_get(row, "event_date")
     ev_time = row_get(row, "event_time")
+    start_time = row_get(row, "start_time") or (ev_time[:5] if ev_time else "")
+    end_time = row_get(row, "end_time")
     category = row_get(row, "category") or ""
     price_thb = row_get(row, "price_thb")
     filter_score = row_get(row, "filter_score")
@@ -216,6 +336,29 @@ def build_event(
     di_label, di_cat = date_info(ev_date, lang, today, tomorrow)
     location = row_get(row, "location_name") or row_get(row, "venue_name") or ""
     raw_summary = resolve_text(row_get(row, "summary"), lang)
+    venue_name = (
+        row_get(row, "venue_name_ru")
+        if lang == "ru" and row_get(row, "venue_name_ru")
+        else row_get(row, "venue_name")
+    )
+    venue_id = row_get(row, "venue_id")
+    venue = None
+    if venue_id is not None or venue_name:
+        venue = {
+            "id": venue_id,
+            "name": venue_name or location,
+            "rating": row_get(row, "venue_rating"),
+            "reviews_count": row_get(row, "venue_reviews_count"),
+            "events_count": row_get(row, "venue_events_count"),
+        }
+    time_info = ev_time[:5] if ev_time else "TBD"
+    duration_label = duration_info(
+        row_get(row, "duration"),
+        start_time,
+        end_time,
+        ends_next_day=bool(row_get(row, "ends_next_day")),
+        lang=lang,
+    )
 
     return {
         "id": str(row_get(row, "id")),
@@ -241,13 +384,17 @@ def build_event(
         "lat": row_get(row, "venue_lat"),
         "lng": row_get(row, "venue_lng"),
         "google_maps_url": row_get(row, "venue_google_maps_url"),
+        "venue": venue,
         "dateInfo": di_label,
         "dateCategory": di_cat,
         "event_time": ev_time[:5] if ev_time else "",
-        "start_time": row_get(row, "start_time") or (ev_time[:5] if ev_time else ""),
-        "end_time": row_get(row, "end_time"),
+        "start_time": start_time,
+        "end_time": end_time,
         "ends_next_day": bool(row_get(row, "ends_next_day")),
-        "timeInfo": ev_time[:5] if ev_time else "TBD",
+        "timeInfo": time_info,
+        "timeRangeInfo": time_range_info(start_time, end_time, time_info),
+        "durationInfo": duration_label,
+        "event_languages": normalize_event_languages(row_get(row, "event_languages")),
         "isLive": is_live(ev_date, ev_time, today, now_bkk),
         "type": etype,
         "category": category,
