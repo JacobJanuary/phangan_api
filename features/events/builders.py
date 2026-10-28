@@ -248,6 +248,19 @@ def _duration_to_minutes(raw: Any) -> int | None:
     return None
 
 
+_DAYS_RE = re.compile(r"(\d+)\s*(?:days?|дн[яей]|день)")
+
+
+def _format_days(days: int, lang: str) -> str:
+    if lang == "ru":
+        if days % 10 == 1 and days % 100 != 11:
+            return f"{days} день"
+        if 2 <= days % 10 <= 4 and not 12 <= days % 100 <= 14:
+            return f"{days} дня"
+        return f"{days} дней"
+    return f"{days} day" if days == 1 else f"{days} days"
+
+
 def _format_duration_minutes(minutes: int | None, lang: str) -> str | None:
     if minutes is None or minutes <= 0:
         return None
@@ -275,6 +288,9 @@ def duration_info(
     ends_next_day: bool,
     lang: str,
 ) -> str | None:
+    days = _DAYS_RE.search(str(raw_duration or "").lower())
+    if days and int(days.group(1)) > 1:
+        return _format_days(int(days.group(1)), lang)
     minutes = _duration_to_minutes(raw_duration)
     if minutes is None:
         start_minutes = _time_to_minutes(start_time)
@@ -351,7 +367,8 @@ def build_event(
             "reviews_count": row_get(row, "venue_reviews_count"),
             "events_count": row_get(row, "venue_events_count"),
         }
-    time_info = ev_time[:5] if ev_time else "TBD"
+    # Only all-day events (retreats, festivals, multi-day) are published without a start time.
+    time_info = ev_time[:5] if ev_time else ("Весь день" if lang == "ru" else "All day")
     duration_label = duration_info(
         row_get(row, "duration"),
         start_time,

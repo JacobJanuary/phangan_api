@@ -38,5 +38,9 @@ def test_public_queries_use_public_status_and_typed_start_time() -> None:
     for text in (events_repo, swipes_repo, planner_repo):
         assert "e.public_status = 'published'" in text
         assert "e.dedup_status = 'unique'" in text
-        assert "e.start_time IS NOT NULL" in text
         assert "to_char(e.start_time, 'HH24:MI')" in text
+    # All-day events have no start time: listed and liked, but not in the timed day plan.
+    for text in (events_repo, swipes_repo):
+        assert "e.start_time IS NOT NULL" not in text
+        assert "OR e.start_time IS NULL" in text
+    assert "e.start_time IS NOT NULL" in planner_repo

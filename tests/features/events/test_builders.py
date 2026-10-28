@@ -197,3 +197,28 @@ def test_build_event_uses_typed_time_and_media_table_contract() -> None:
     assert event["keywords"]["en"] == ["music"]
     assert event["faqs"][0]["answer"]["en"] == "Water."
 
+
+def test_build_event_without_start_time_runs_all_day() -> None:
+    row = {
+        "id": 26099,
+        "event_date": date(2026, 11, 1),
+        "event_time": None,
+        "start_time": None,
+        "end_time": None,
+        "duration": "9 days",
+        "title": {"en": "Vipassana Retreat", "ru": "Ретрит Випассаны"},
+        "category": "meditation",
+        "location_name": "Indriya Retreat",
+    }
+
+    kwargs = dict(today=date(2026, 11, 1), tomorrow=date(2026, 11, 2), now_bkk=datetime(2026, 11, 1, 23, 0),
+                  media_base_url="https://api.example/media")
+    en = build_event(row, lang="en", **kwargs)
+    ru = build_event(row, lang="ru", **kwargs)
+
+    assert en["timeInfo"] == en["timeRangeInfo"] == "All day"
+    assert ru["timeInfo"] == "Весь день"
+    assert en["durationInfo"] == "9 days" and ru["durationInfo"] == "9 дней"
+    assert en["isLive"] is False
+    assert duration_info("21 days", None, None, ends_next_day=False, lang="ru") == "21 день"
+    assert duration_info("6 hours/day, 4 days", None, None, ends_next_day=False, lang="ru") == "4 дня"

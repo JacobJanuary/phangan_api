@@ -6,10 +6,12 @@ from dataclasses import dataclass
 
 import asyncpg
 
-# WHERE clauses shared between upcoming/past splits.
+# WHERE clauses shared between upcoming/past splits. An event without a
+# start time runs all day and stays upcoming until its date is over.
 _UPCOMING_TIME_FILTER = """
     (
         e.event_date > (NOW() AT TIME ZONE 'Asia/Bangkok')::date
+        OR e.start_time IS NULL
         OR CASE
             WHEN e.category ILIKE 'party'
             THEN (e.event_date + e.start_time) + interval '3 hours' >= NOW() AT TIME ZONE 'Asia/Bangkok'
@@ -87,7 +89,6 @@ _BASE_WHERE = """
       AND e.public_status = 'published'
       AND e.dedup_status = 'unique'
       AND e.enrichment_status <> 'needs_repair'
-      AND e.start_time IS NOT NULL
 """
 
 
