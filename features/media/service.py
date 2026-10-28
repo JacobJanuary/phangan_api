@@ -64,6 +64,6 @@ class MediaService:
         filename = f"story_{uuid.uuid4().hex}.{ext}"
         dest = self._stories_dir / filename
         dest.write_bytes(content)
-        logger.info("Story image saved", extra={"filename": filename, "size": len(content)})
+        logger.info("Story image saved", extra={"story_filename": filename, "size": len(content)})
 
         return f"{self.settings.PUBLIC_MEDIA_BASE_URL}/stories/{filename}"
