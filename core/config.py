@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str | None = None
     MAPBOX_TOKEN: str = ""
 
+    # ── Pinecone AI Search (disabled by default) ────────────────────
+    PINECONE_ENABLED: bool = False
+    PINECONE_RERANK_ENABLED: bool = False
+    PINECONE_API_KEY: str | None = None
+    PINECONE_INDEX_NAME: str = ""
+    PINECONE_NAMESPACE: str = "public"
+    PINECONE_MODEL: str = "multilingual-e5-large"
+    PINECONE_RERANK_MODEL: str = "bge-reranker-v2-m3"
+
     # ── CORS ─────────────────────────────────────────────────────────
     CORS_ORIGINS: list[str] = ["*"]
 
