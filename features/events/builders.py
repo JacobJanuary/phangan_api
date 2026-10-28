@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import asyncpg
@@ -251,6 +251,22 @@ def _duration_to_minutes(raw: Any) -> int | None:
 _DAYS_RE = re.compile(r"(\d+)\s*(?:days?|дн[яей]|день)")
 
 
+def event_last_date(ev_date: date | None, raw_duration: Any) -> date | None:
+    """Last day of an event; repository.EVENT_LAST_DATE is the same rule in SQL."""
+    if ev_date is None:
+        return None
+    days = _DAYS_RE.search(str(raw_duration or "").lower())
+    count = min(max(int(days.group(1)), 1), 60) if days else 1
+    return ev_date + timedelta(days=count - 1)
+
+
+def ongoing_date_info(last_date: date, lang: str) -> tuple[str, str]:
+    """dateInfo of a multi-day event that started before today."""
+    if lang == "ru":
+        return (f"ИДЁТ · ДО {last_date.day:02d} {MONTHS_RU[last_date.month - 1]}", "today")
+    return (f"ON NOW · UNTIL {last_date.day:02d} {MONTHS_EN[last_date.month - 1]}", "today")
+
+
 def _format_days(days: int, lang: str) -> str:
     if lang == "ru":
         if days % 10 == 1 and days % 100 != 11:
@@ -372,7 +388,9 @@ def build_event(
 
     etype = event_type(category)
     ui_cat = UI_CATEGORY_MAP.get(category.lower(), "Chill") if category else "Chill"
-    di_label, di_cat = date_info(ev_date, lang, today, tomorrow)
+    last_date = event_last_date(ev_date, row_get(row, "duration"))
+    ongoing = bool(ev_date and last_date and ev_date < today <= last_date)
+    di_label, di_cat = ongoing_date_info(last_date, lang) if ongoing else date_info(ev_date, lang, today, tomorrow)
     location = row_get(row, "location_name") or row_get(row, "venue_name") or ""
     secret_location = is_secret_location(location)
     if secret_location:
@@ -408,6 +426,8 @@ def build_event(
         "public_id": str(row_get(row, "public_id")) if row_get(row, "public_id") else None,
         "slug": row_get(row, "slug"),
         "event_date": ev_date.isoformat() if ev_date else None,
+        "end_date": last_date.isoformat() if last_date and last_date != ev_date else None,
+        "is_ongoing": ongoing,
         "title": resolve_text(row_get(row, "title"), lang),
         "summary": raw_summary[:120] if raw_summary else "",
         "description": resolve_text(row_get(row, "description"), lang),

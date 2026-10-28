@@ -6,11 +6,14 @@ from dataclasses import dataclass
 
 import asyncpg
 
+from features.events.repository import EVENT_LAST_DATE
+
 # WHERE clauses shared between upcoming/past splits. An event without a
-# start time runs all day and stays upcoming until its date is over.
-_UPCOMING_TIME_FILTER = """
+# start time runs all day and stays upcoming until its date is over; a
+# multi-day one until its last day.
+_UPCOMING_TIME_FILTER = f"""
     (
-        e.event_date > (NOW() AT TIME ZONE 'Asia/Bangkok')::date
+        {EVENT_LAST_DATE} > (NOW() AT TIME ZONE 'Asia/Bangkok')::date
         OR e.start_time IS NULL
         OR CASE
             WHEN e.category ILIKE 'party'
@@ -125,9 +128,9 @@ class SwipesRepository:
             SELECT {_EVENT_COLUMNS}
             {_FROM_JOIN}
             {_BASE_WHERE}
-            AND e.event_date >= (NOW() AT TIME ZONE 'Asia/Bangkok')::date
+            AND {EVENT_LAST_DATE} >= (NOW() AT TIME ZONE 'Asia/Bangkok')::date
             AND {_UPCOMING_TIME_FILTER}
-            ORDER BY e.event_date ASC, e.start_time ASC NULLS LAST
+            ORDER BY GREATEST(e.event_date, (NOW() AT TIME ZONE 'Asia/Bangkok')::date) ASC, e.start_time ASC NULLS LAST
         """
         async with self.pool.acquire() as conn:
             return await conn.fetch(query, user_id)
@@ -138,7 +141,7 @@ class SwipesRepository:
             {_FROM_JOIN}
             {_BASE_WHERE}
             AND NOT (
-                e.event_date >= (NOW() AT TIME ZONE 'Asia/Bangkok')::date
+                {EVENT_LAST_DATE} >= (NOW() AT TIME ZONE 'Asia/Bangkok')::date
                 AND {_UPCOMING_TIME_FILTER}
             )
         """
@@ -153,7 +156,7 @@ class SwipesRepository:
             {_FROM_JOIN}
             {_BASE_WHERE}
             AND NOT (
-                e.event_date >= (NOW() AT TIME ZONE 'Asia/Bangkok')::date
+                {EVENT_LAST_DATE} >= (NOW() AT TIME ZONE 'Asia/Bangkok')::date
                 AND {_UPCOMING_TIME_FILTER}
             )
             ORDER BY e.event_date DESC, e.start_time DESC NULLS LAST

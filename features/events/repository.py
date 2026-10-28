@@ -117,11 +117,17 @@ _PUBLIC_EVENT_FILTER = """
     AND e.enrichment_status <> 'needs_repair'
 """
 
+# Last day of an event: a multi-day one ("9 days", as builders.event_last_date
+# reads it) is listed every day until then.
+EVENT_LAST_DATE = r"""(e.event_date + (LEAST(GREATEST(COALESCE(
+    substring(lower(e.duration) from '(\d+)\s*(?:days?|дн[яей]|день)')::int, 1), 1), 60) - 1))"""
+_BKK_TODAY = "(NOW() AT TIME ZONE 'Asia/Bangkok')::date"
+
 # A published event without a start time runs all day (retreat, festival,
 # multi-day event): it stays upcoming until its date is over.
-_UPCOMING_TIME_FILTER = """
+_UPCOMING_TIME_FILTER = f"""
     (
-        e.event_date > (NOW() AT TIME ZONE 'Asia/Bangkok')::date
+        {EVENT_LAST_DATE} > {_BKK_TODAY}
         OR e.start_time IS NULL
         OR CASE
             WHEN e.category ILIKE 'party'
@@ -148,7 +154,7 @@ class EventsRepository:
         offset: int,
     ) -> tuple[list[asyncpg.Record], int]:
         conditions: list[str] = [
-            "e.event_date >= (NOW() AT TIME ZONE 'Asia/Bangkok')::date",
+            f"{EVENT_LAST_DATE} >= {_BKK_TODAY}",
             _PUBLIC_EVENT_FILTER,
             _UPCOMING_TIME_FILTER,
         ]
@@ -163,9 +169,9 @@ class EventsRepository:
             f"e.id NOT IN (SELECT event_id FROM user_swipes WHERE user_id = {_p(user_id)})"
         )
         if date_filter == "today":
-            conditions.append(f"e.event_date = {_p(today)}")
+            conditions.append(f"{_p(today)}::date BETWEEN e.event_date AND {EVENT_LAST_DATE}")
         elif date_filter == "tomorrow":
-            conditions.append(f"e.event_date = {_p(tomorrow)}")
+            conditions.append(f"{_p(tomorrow)}::date BETWEEN e.event_date AND {EVENT_LAST_DATE}")
         if category == "party":
             # Match builders.PARTY_CATEGORIES — case-insensitive.
             conditions.append(
@@ -188,7 +194,7 @@ class EventsRepository:
             FROM events e
             {_EVENT_JOINS}
             {where}
-            ORDER BY e.event_date ASC, e.start_time ASC NULLS LAST,
+            ORDER BY GREATEST(e.event_date, {_BKK_TODAY}) ASC, e.start_time ASC NULLS LAST,
                      e.filter_score DESC NULLS LAST
             LIMIT {limit_ph} OFFSET {offset_ph}
         """

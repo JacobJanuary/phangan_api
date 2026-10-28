@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from features.events.builders import (
     build_event,
     date_info,
     duration_info,
+    event_last_date,
     event_type,
     fomo_hook,
     is_live,
@@ -245,3 +246,27 @@ def test_build_event_names_a_secret_location_and_links_the_post() -> None:
     assert ru["location"] == "Секретное место — уточняйте у организатора" and ru["is_secret_location"] is True
     assert ru["source_post_url"] == "https://t.me/devichnikiphangan/7273"
     assert en["location"] == "Secret location — ask the organiser" and en["source_post_url"] is None
+
+
+def test_build_event_multi_day_event_is_listed_as_ongoing() -> None:
+    row = {
+        "id": 26099,
+        "event_date": date(2026, 11, 1),
+        "event_time": None,
+        "start_time": None,
+        "duration": "9 days",
+        "title": {"en": "Vipassana Retreat", "ru": "Ретрит Випассаны"},
+        "category": "meditation",
+        "location_name": "Indriya Retreat",
+    }
+
+    def at(day: int, lang: str = "ru"):
+        today = date(2026, 11, day)
+        return build_event(row, lang=lang, today=today, tomorrow=today + timedelta(days=1),
+                           now_bkk=datetime(2026, 11, day, 9, 0), media_base_url="https://x")
+
+    assert at(1)["dateInfo"] == "СЕГОДНЯ" and at(1)["is_ongoing"] is False
+    assert at(4)["dateInfo"] == "ИДЁТ · ДО 09 НОЯ" and at(4)["dateCategory"] == "today" and at(4)["is_ongoing"] is True
+    assert at(9, "en")["dateInfo"] == "ON NOW · UNTIL 09 NOV"
+    assert at(4)["end_date"] == "2026-11-09"
+    assert event_last_date(date(2026, 11, 1), "8h") == date(2026, 11, 1)

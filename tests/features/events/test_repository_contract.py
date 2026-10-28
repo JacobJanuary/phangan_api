@@ -43,4 +43,5 @@ def test_public_queries_use_public_status_and_typed_start_time() -> None:
     for text in (events_repo, swipes_repo):
         assert "e.start_time IS NOT NULL" not in text
         assert "OR e.start_time IS NULL" in text
+        assert "EVENT_LAST_DATE" in text  # multi-day events stay listed until their last day
     assert "e.start_time IS NOT NULL" in planner_repo
