@@ -191,7 +191,8 @@ class PlannerService:
                 "location": row["location_name"] or "",
                 "coords": ({"lat": vlat, "lng": vlng} if vlat and vlng else None),
                 "distance_from_user_km": dist,
-                "price_thb": row["price_thb"] or 0,
+                "price_thb": row["price_thb"],  # None: unknown, not free
+                "price_kind": row["price_kind"],
             })
         return events_data
 
@@ -324,6 +325,7 @@ class PlannerService:
                 item["lng"] = ev["coords"]["lng"] if ev["coords"] else None
                 item["category"] = ev["category"]
                 item["price_thb"] = ev["price_thb"]
+                item["price_kind"] = ev["price_kind"]
 
         for item in plan.get("skipped", []):
             ev = events_by_id.get(str(item.get("event_id", "")))
@@ -334,7 +336,8 @@ class PlannerService:
                 item["lat"] = ev["coords"]["lat"] if ev.get("coords") else None
                 item["lng"] = ev["coords"]["lng"] if ev.get("coords") else None
                 item["category"] = ev.get("category", "")
-                item["price_thb"] = ev.get("price_thb", 0)
+                item["price_thb"] = ev.get("price_thb")
+                item["price_kind"] = ev.get("price_kind")
 
         timeline_ids = {
             str(item.get("event_id", "")) for item in plan.get("timeline", [])
@@ -349,6 +352,7 @@ class PlannerService:
                 "lng": ev["coords"]["lng"] if ev["coords"] else None,
                 "category": ev["category"],
                 "price_thb": ev["price_thb"],
+                "price_kind": ev["price_kind"],
                 "duration_min": ev["duration_min"],
             }
             for ev in events_data

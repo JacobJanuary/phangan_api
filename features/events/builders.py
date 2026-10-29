@@ -467,7 +467,9 @@ def build_event(
         "color": TYPE_COLOR.get(etype, "#00f3ff"),
         "fomoHook": fomo_hook(price_thb, filter_score, lang),
         "recurrence_type": row_get(row, "recurrence_type"),
-        "price_thb": price_thb if price_thb is not None else 0,
+        # None is an unknown price, not a free one; "donation" has no ticket price.
+        "price_thb": price_thb,
+        "price_kind": row_get(row, "price_kind"),
         "currency_code": row_get(row, "currency_code") or "THB",
         "media": media,
         "faqs": parse_jsonb_list(row_get(row, "faqs")),

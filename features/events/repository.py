@@ -42,6 +42,7 @@ _EVENT_PROJECTION = """
     e.location_name,
     e.venue_id,
     e.price_thb,
+    e.price_kind,
     e.currency_code,
     e.filter_score,
     COALESCE(cover.storage_key, e.image_path) AS image_path,

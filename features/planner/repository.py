@@ -29,7 +29,7 @@ class PlannerRepository:
                 SELECT e.id, e.title, e.summary, e.category,
                        e.event_date,
                        to_char(e.start_time, 'HH24:MI') AS event_time,
-                       e.location_name, e.price_thb,
+                       e.location_name, e.price_thb, e.price_kind,
                        v.lat AS venue_lat, v.lng AS venue_lng
                 FROM user_swipes s
                 JOIN events e ON e.id = s.event_id

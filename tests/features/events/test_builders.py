@@ -270,3 +270,19 @@ def test_build_event_multi_day_event_is_listed_as_ongoing() -> None:
     assert at(9, "en")["dateInfo"] == "ON NOW · UNTIL 09 NOV"
     assert at(4)["end_date"] == "2026-11-09"
     assert event_last_date(date(2026, 11, 1), "8h") == date(2026, 11, 1)
+
+
+def test_build_event_keeps_an_unknown_price_unknown_and_passes_a_donation() -> None:
+    kwargs = dict(lang="ru", today=date(2026, 10, 29), tomorrow=date(2026, 10, 30),
+                  now_bkk=datetime(2026, 10, 29, 5, 0), media_base_url="https://api.example/media")
+    base = {"id": 52708, "event_date": date(2026, 10, 29), "start_time": "05:55", "end_time": "06:45",
+            "title": {"en": "Mantra Meditation"}, "category": "meditation", "location_name": "HEXAGON"}
+
+    donation = build_event({**base, "price_thb": None, "price_kind": "donation"}, **kwargs)
+    unknown = build_event({**base, "price_thb": None}, **kwargs)  # a projection without price_kind
+    free = build_event({**base, "price_thb": 0}, **kwargs)
+
+    assert (donation["price_thb"], donation["price_kind"]) == (None, "donation")
+    assert donation["fomoHook"] != "Бесплатно"
+    assert (unknown["price_thb"], unknown["price_kind"]) == (None, None)
+    assert (free["price_thb"], free["fomoHook"]) == (0, "Бесплатно")

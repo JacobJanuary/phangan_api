@@ -33,7 +33,7 @@ _EVENT_COLUMNS = """
     to_char(e.start_time, 'HH24:MI') AS start_time,
     to_char(e.end_time, 'HH24:MI') AS end_time,
     e.ends_next_day,
-    e.location_name, e.price_thb, e.currency_code,
+    e.location_name, e.price_thb, e.price_kind, e.currency_code,
     e.filter_score, COALESCE(cover.storage_key, e.image_path) AS image_path,
     COALESCE(media.media, '[]'::jsonb) AS media,
     COALESCE(faqs.faqs, '[]'::jsonb) AS faqs,
