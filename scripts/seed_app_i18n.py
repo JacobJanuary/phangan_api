@@ -52,7 +52,7 @@ TRANSLATIONS = [
     ("radar", "error_desc",               "Вставь свой API-ключ...",              "Insert your API key (MAPBOX_TOKEN) in .env to load the map."),
 
     # ═══════════════════════════════════════════════════════════════════════
-    # 4. swipe_feed (23 keys)
+    # 4. swipe_feed (24 keys)
     # ═══════════════════════════════════════════════════════════════════════
     ("swipe_feed", "filter_all",          "Все",                                 "All"),
     ("swipe_feed", "filter_party",        "Тусовки",                             "Party"),
@@ -77,6 +77,7 @@ TRANSLATIONS = [
     ("swipe_feed", "stamp_save",          "В радар",                              "To Radar"),
     ("swipe_feed", "stamp_pass",          "Пасс",                                 "Pass"),
     ("swipe_feed", "share_text",          "🔥 Го со мной на {title}!\n📍 {location} | 🗓 {date} • {time}\n\n👇 Жми, чтобы посмотреть...", "🔥 Join me at {title}!\n📍 {location} | 🗓 {date} • {time}\n\n👇 Tap to see the line-up..."),
+    ("swipe_feed", "donation",            "Донейшн",                             "Donation"),
 
     # ═══════════════════════════════════════════════════════════════════════
     # 5. my_vibe (6 keys)
@@ -103,7 +104,7 @@ TRANSLATIONS = [
     ("event_details", "secret_list_badge","Скоро",                               "Soon"),
 
     # ═══════════════════════════════════════════════════════════════════════
-    # 7. vibe_pilot (35 keys)
+    # 7. vibe_pilot (37 keys)
     # ═══════════════════════════════════════════════════════════════════════
     ("vibe_pilot", "tab_today",           "Сегодня",                              "Today"),
     ("vibe_pilot", "tab_tomorrow",        "Завтра",                               "Tomorrow"),
@@ -122,6 +123,7 @@ TRANSLATIONS = [
     ("vibe_pilot", "share_plan_name",     "Создай свой план",                     "Create your plan"),
     ("vibe_pilot", "canvas_watermark",    "Made with AI · VibeRadar 🧭",          "Made with AI · VibeRadar 🧭"),
     ("vibe_pilot", "price_free",          "БЕСПЛАТНО",                            "FREE"),
+    ("vibe_pilot", "price_donation",      "ДОНЕЙШН",                              "DONATION"),
     ("vibe_pilot", "travel_from_you",     "от вас",                               "from you"),
     ("vibe_pilot", "loading_title",       "Планируем идеальный день",             "Planning the perfect day"),
     ("vibe_pilot", "error_title",         "Не удалось создать план",              "Could not create plan"),
