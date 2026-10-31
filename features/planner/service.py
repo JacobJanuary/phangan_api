@@ -22,7 +22,6 @@ from features.planner.repository import PlannerRepository
 from features.planner.schemas import PlannerRequest
 from shared.ai.anthropic_adapter import AnthropicProvider
 from shared.ai.cascade import CascadeOrchestrator, CascadeStep
-from shared.ai.openai_adapter import OpenAICompatibleProvider
 from shared.ai.ports import CompletionRequest
 from shared.distance.haversine import road_km, travel_minutes
 
@@ -215,33 +214,21 @@ class PlannerService:
         return matrix
 
     def _build_cascade(self) -> CascadeOrchestrator:
-        steps: list[CascadeStep] = []
-
-        if self.settings.ANTHROPIC_API_KEY:
-            steps.append(CascadeStep(
+        if not self.settings.ANTHROPIC_API_KEY:
+            raise ExternalServiceError(
+                "No AI provider configured for Vibe Pilot",
+                details={"hint": "set ANTHROPIC_API_KEY"},
+            )
+        return CascadeOrchestrator(steps=[
+            CascadeStep(
                 provider=AnthropicProvider(
                     api_key=self.settings.ANTHROPIC_API_KEY,
                     model="claude-haiku-4-5-20251001",
                     name="anthropic_true",
                 ),
                 max_attempts=2,
-            ))
-        if self.settings.DEEPSEEK_API_KEY:
-            steps.append(CascadeStep(
-                provider=OpenAICompatibleProvider(
-                    api_key=self.settings.DEEPSEEK_API_KEY,
-                    model="deepseek-chat",
-                    base_url="https://api.deepseek.com",
-                    name="deepseek",
-                ),
-                max_attempts=1,
-            ))
-        if not steps:
-            raise ExternalServiceError(
-                "No AI provider configured for Vibe Pilot",
-                details={"hint": "set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY"},
-            )
-        return CascadeOrchestrator(steps=steps)
+            ),
+        ])
 
     async def _call_ai_cascade(
         self, ai_input: dict, body: PlannerRequest

@@ -8,7 +8,6 @@ def _settings(**overrides: object) -> Settings:
         "DB_USER": "test",
         "DB_PASSWORD": "test",
         "BOT_TOKEN": "bot:test",
-        "KIMI_CODE_API_KEY": "test",
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
